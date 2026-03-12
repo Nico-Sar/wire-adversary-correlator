@@ -1,0 +1,30 @@
+# Data — never commit pcaps or datasets
+data/
+logs/
+results/
+
+# Local infrastructure config with real IPs
+config/infrastructure_local.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Screenshots from browser automation
+*.jpeg
+*.png
+
+# OS
+.DS_Store
+
+# .testdata is intentionally NOT ignored — committed sample for smoke tests

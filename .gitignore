@@ -28,3 +28,4 @@ build/
 .DS_Store
 
 # .testdata is intentionally NOT ignored — committed sample for smoke tests
+*.egg-info/

@@ -24,7 +24,54 @@ def visit(url: str, visit_id: str, proxy: str | None) -> dict:
     waits for page load + settle time, then closes.
     Returns a metadata dict serialized to stdout as JSON.
     """
-    raise NotImplementedError
+    meta = {
+        "visit_id":   visit_id,
+        "url":        url,
+        "proxy":      proxy,
+        "t_start":    time.time(),
+        "t_end":      None,
+        "duration_s": None,
+        "status":     "started",
+    }
+
+    try:
+        with sync_playwright() as p:
+            launch_kwargs = {}
+            if proxy:
+                launch_kwargs["proxy"] = {"server": proxy}
+
+            browser = p.firefox.launch(headless=True, **launch_kwargs)
+            context = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=True,
+            )
+            page = context.new_page()
+
+            try:
+                # Navigate and wait for the load event
+                page.goto(
+                    f"http://{url}" if not url.startswith("http") else url,
+                    wait_until="load",
+                    timeout=30000,
+                )
+
+                # Settle time — lets trailing requests (ACKs, keep-alives) complete
+                time.sleep(3)
+
+                meta["status"] = "success"
+
+            except Exception as e:
+                meta["status"] = f"error: {e}"
+
+            finally:
+                browser.close()
+
+    except Exception as e:
+        meta["status"] = f"launch_error: {e}"
+
+    meta["t_end"]      = time.time()
+    meta["duration_s"] = round(meta["t_end"] - meta["t_start"], 3)
+    return meta
 
 
 if __name__ == "__main__":
@@ -36,4 +83,4 @@ if __name__ == "__main__":
 
     result = visit(args.url, args.visit_id, args.proxy)
     print(json.dumps(result))
-    sys.exit(0 if result.get("status") == "success" else 1)
+    sys.exit(0 if result["status"] == "success" else 1)

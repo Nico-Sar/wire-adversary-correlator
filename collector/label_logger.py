@@ -22,7 +22,6 @@ from pathlib import Path
 class LabelLogger:
     """
     Context manager. Usage:
-
         with LabelLogger("logs/labels.jsonl", visit_id, url, mode) as logger:
             # browser visit happens here
             pass
@@ -41,11 +40,18 @@ class LabelLogger:
         }
 
     def __enter__(self):
-        raise NotImplementedError
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.record["t_start"] = time.time()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        raise NotImplementedError
+        self.record["t_end"] = time.time()
+        self.record["status"] = "error" if exc_type is not None else "success"
+        self._write()
+        # Return False so exceptions propagate normally
+        return False
 
     def _write(self):
         """Appends the current record to the JSONL log file."""
-        raise NotImplementedError
+        with self.log_path.open("a") as f:
+            f.write(json.dumps(self.record) + "\n")

@@ -187,19 +187,19 @@ def run_single_visit(url: str, mode: str,
 
     def start_ingress():
         ingress_pid_box[0] = start_remote_capture(
-            ingress_ssh,
-            INGRESS_ROUTER["iface_wan"],
-            bpf_in,
-            ingress_remote,
-        )
+        client_ssh,                          # ← capture on CLIENT
+        "enp7s0",                            # ← client's VPC interface
+        bpf_in,
+        ingress_remote,
+    )
 
     def start_egress():
         egress_pid_box[0] = start_remote_capture(
-            egress_ssh,
-            EGRESS_ROUTER["iface_server"],
-            bpf_out,
-            egress_remote,
-        )
+        server_ssh,                          # ← capture on WEB SERVER
+        "enp7s0",                            # ← server's VPC interface
+        bpf_out,
+        egress_remote,
+    )
 
     t_in  = threading.Thread(target=start_ingress)
     t_out = threading.Thread(target=start_egress)
@@ -290,7 +290,7 @@ def run_dataset(url_list_path: str, mode: str,
         for url in urls:
             for visit_num in range(visits_per_url):
                 serial += 1
-                visit_id = f"{client_id}_v{serial:05d}"   # ← e.g. client1_v00001
+                visit_id = f"{client_id}_v{serial:05d}"
                 print(f"[{serial}/{total}] {visit_id} — {url}")
 
                 try:

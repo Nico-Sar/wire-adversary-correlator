@@ -102,25 +102,28 @@ def verify_clock_sync(ingress_ssh, egress_ssh, max_drift_ms=MAX_CLOCK_DRIFT_MS):
 
 def start_remote_capture(ssh_client, iface: str, bpf: str,
                           pcap_remote_path: str) -> str:
-    """
-    Starts tshark on the remote router in the background.
-    Returns the process PID as a string.
-    """
+    log_file = pcap_remote_path.replace('.pcap', '.log')
     cmd = (
-        f"tshark -i {iface} -f '{bpf}' "
+        f"/usr/bin/tshark -i {iface} -f '{bpf}' "
         f"-s {SNAPSHOT_LENGTH} "
         f"-w {pcap_remote_path} "
-        f"> /dev/null 2>&1 & echo $!"
+        f"> {log_file} 2>&1 </dev/null & echo $!"
     )
     pid = ssh_run(ssh_client, cmd)
-    time.sleep(0.5)
+    time.sleep(1.0)
+    check = ssh_run(ssh_client,
+                    f"kill -0 {pid} 2>/dev/null && echo alive || echo dead",
+                    check=False)
+    if "alive" not in check:
+        log = ssh_run(ssh_client, f"cat {log_file} 2>/dev/null || echo no log", check=False)
+        raise RuntimeError(f"tshark failed to start on {iface}:\n{log}")
     return pid
 
 
 def stop_remote_capture(ssh_client, pid: str):
     """Sends SIGTERM to the tshark process and waits for it to flush."""
     ssh_run(ssh_client, f"kill {pid}", check=False)
-    time.sleep(1.0)
+    time.sleep(2.0)
 
 
 # ── Visit trigger ─────────────────────────────────────────────────────────────
@@ -187,19 +190,19 @@ def run_single_visit(url: str, mode: str,
 
     def start_ingress():
         ingress_pid_box[0] = start_remote_capture(
-        client_ssh,                          # ← capture on CLIENT
-        "enp7s0",                            # ← client's VPC interface
-        bpf_in,
-        ingress_remote,
-    )
+            ingress_ssh,                         # ← was client_ssh — WRONG
+            INGRESS_ROUTER["iface_client"],      # enp7s0
+            bpf_in,
+            ingress_remote,
+        )
 
     def start_egress():
         egress_pid_box[0] = start_remote_capture(
-        server_ssh,                          # ← capture on WEB SERVER
-        "enp7s0",                            # ← server's VPC interface
-        bpf_out,
-        egress_remote,
-    )
+            egress_ssh,
+            EGRESS_ROUTER["iface_server"],       # enp7s0
+            bpf_out,
+            egress_remote,
+        )
 
     t_in  = threading.Thread(target=start_ingress)
     t_out = threading.Thread(target=start_egress)
@@ -222,7 +225,7 @@ def run_single_visit(url: str, mode: str,
 
     # ── Step 3: Stop captures ─────────────────────────────────────────────
     def stop_ingress():
-        stop_remote_capture(ingress_ssh, ingress_pid)
+        stop_remote_capture(ingress_ssh, ingress_pid)  
 
     def stop_egress():
         stop_remote_capture(egress_ssh, egress_pid)

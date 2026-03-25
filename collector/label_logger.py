@@ -1,6 +1,12 @@
 """
 collector/label_logger.py
 =========================
+NOTE: This module is kept for potential future use with always-on rotating
+captures, where a separate label log would be needed to carve visit windows
+from continuous pcap files. It is NOT used in the current per-visit pcap
+model, where visit timing is embedded directly in the VisitRecord returned
+by coordinator.run_single_visit().
+
 Lightweight process that runs on the CLIENT VM alongside visit_trigger.py.
 Records (visit_id, t_start, t_end, url, mode) for every scripted browser visit
 so that the preprocessor can carve the correct time windows from the rotating

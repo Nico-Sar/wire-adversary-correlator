@@ -191,7 +191,7 @@ def run_single_visit(url: str, mode: str,
 
     def start_ingress():
         ingress_pid_box[0] = start_remote_capture(
-            ingress_ssh,                         # ← was client_ssh — WRONG
+            ingress_ssh,
             INGRESS_ROUTER["iface_client"],      # enp7s0
             bpf_in,
             ingress_remote,

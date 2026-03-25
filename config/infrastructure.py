@@ -2,7 +2,6 @@ INGRESS_ROUTER = {
     "host":         "204.168.184.30",
     "user":         "root",
     "key_path":     "~/.ssh/nico-thesis",
-    "iface_wan":    "eth0",
     "iface_client": "enp7s0",
     "capture_dir":  "/tmp/captures",
     "private_ip":   "10.0.0.2",
@@ -12,7 +11,6 @@ EGRESS_ROUTER = {
     "host":         "204.168.189.97",
     "user":         "root",
     "key_path":     "~/.ssh/nico-thesis",
-    "iface_wan":    "eth0",
     "iface_server": "enp7s0",
     "capture_dir":  "/tmp/captures",
     "private_ip":   "10.1.0.2",
@@ -49,11 +47,11 @@ PROXY_MAP = {
 
 # ── Capture settings ──────────────────────────────────────────────────────────
 SNAPSHOT_LENGTH     = 96    # Headers only — never capture payload
-PCAP_ROTATE_SECONDS = 300   # Rotate pcap files every 5 minutes
 
 # ── Clock sync ────────────────────────────────────────────────────────────────
 MAX_CLOCK_DRIFT_MS = 5      # Abort if inter-router drift exceeds this
 
-# ── Network interface names (same on all VMs) ─────────────────────────────────
-PRIVATE_IFACE = "enp7s0"
-PUBLIC_IFACE  = "eth0"
+
+def get_client_private_ip(client_id: str) -> str:
+    """Return the private LAN IP for the given client_id (e.g. 'client1')."""
+    return CLIENTS[client_id]["private_ip"]

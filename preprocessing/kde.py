@@ -42,7 +42,7 @@ def split_directions(packets: list[dict]) -> tuple[list[float], list[float]]:
 
 
 def kde_shape(timestamps: list[float],
-              duration:   float = KDE["duration"],
+              duration:   float,
               sigma:      float = KDE["sigma"],
               t_sample:   float = KDE["t_sample"]) -> np.ndarray:
     """

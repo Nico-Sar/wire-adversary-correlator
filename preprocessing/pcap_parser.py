@@ -3,29 +3,50 @@ preprocessing/pcap_parser.py
 ============================
 Wraps tshark to extract per-packet metadata from a pcap file.
 Output: list of dicts with keys {ts, size, direction}
+
 direction: +1 = outbound (UP), -1 = inbound (DOWN)
 Determined by comparing src IP to the known local IP of the capture point.
 IPs are intentionally dropped from output — the ML pipeline never sees them.
+
+local_ip must be passed explicitly by the caller:
+  - For ingress captures: INGRESS_ROUTER["private_ip"]  → "10.0.0.2"
+  - For egress  captures: EGRESS_ROUTER["private_ip"]   → "10.1.0.2"
+
+Rationale: inferring local_ip from the first packet is unreliable for
+Nym/Tor/VPN modes where the first egress packet may originate from an
+exit node IP rather than the router's own private IP.
 """
 
+import shutil
 import subprocess
-from typing import Optional
 
 
 def extract_packets(pcap_path: str,
-                    local_ip: Optional[str] = None) -> list[dict]:
+                    local_ip:  str) -> list[dict]:
     """
     Calls tshark on pcap_path and returns a list of packet dicts.
-    Fields: ts (float, epoch), size (int, bytes), direction (+1/-1).
-    local_ip: IP of the 'client side' machine at this capture point.
-    If None, the first source IP seen is used (reasonable for most cases).
+
+    Fields:
+        ts        (float) — absolute epoch timestamp in seconds
+        size      (int)   — packet size in bytes
+        direction (int)   — +1 outbound (UP), -1 inbound (DOWN)
+
+    Args:
+        pcap_path: path to the .pcap file to parse
+        local_ip:  IP address of the 'local' side at this capture point.
+                   Packets where src == local_ip are UP (+1),
+                   all others are DOWN (-1).
+                   Use INGRESS_ROUTER["private_ip"] or
+                       EGRESS_ROUTER["private_ip"] from infrastructure.py.
 
     NOTE: src/dst IPs are used only to determine direction and are
     then discarded. The output contains no IP addresses.
     """
+    tshark = shutil.which("tshark") or "/usr/bin/tshark"
+
     result = subprocess.run(
         [
-            "tshark",
+            tshark,
             "-r", pcap_path,
             "-T", "fields",
             "-E", "separator=,",
@@ -40,7 +61,6 @@ def extract_packets(pcap_path: str,
     )
 
     packets = []
-    inferred_local_ip = local_ip
 
     for line in result.stdout.splitlines():
         line = line.strip()
@@ -62,11 +82,7 @@ def extract_packets(pcap_path: str,
         except ValueError:
             continue
 
-        # Infer local IP from first packet if not provided
-        if inferred_local_ip is None:
-            inferred_local_ip = src
-
-        direction = +1 if src == inferred_local_ip else -1
+        direction = +1 if src == local_ip else -1
 
         # IPs are intentionally not included in the output dict
         packets.append({

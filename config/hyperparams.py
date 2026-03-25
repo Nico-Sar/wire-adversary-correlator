@@ -17,12 +17,19 @@ VISIT_TIMEOUTS = {
 # ── KDE / Preprocessing ───────────────────────────────────────────────────────
 
 KDE = {
-    "sigma":      0.125,    # Gaussian kernel width (seconds)
-    "t_sample":   0.1,      # Sampling period (seconds) → 10 samples/sec
-    "window_len": 30,       # Window length in samples (= 3 seconds)
-    "overlap":    0.5,      # Fractional overlap between windows
+    "sigma":       0.125,   # Gaussian kernel width (seconds)
+    "t_sample":    0.1,     # Sampling period (seconds) → 10 samples/sec
+    "window_len":  30,      # Window length in samples (= 3 seconds)
+    "overlap":     0.5,     # Fractional overlap between windows
     "min_packets": 5,       # Discard flows with fewer packets than this
-    "duration": 60.0,     # Max seconds of flow to analyze (ShYSh: 60s)
+}
+
+# Per-mode KDE overrides — duration and sigma vary with anonymity system latency
+KDE_PER_MODE = {
+    "baseline": {"duration": 30.0,  "sigma": 0.125},
+    "tor":      {"duration": 60.0,  "sigma": 0.25},
+    "nym":      {"duration": 120.0, "sigma": 0.5},
+    "vpn":      {"duration": 30.0,  "sigma": 0.125},
 }
 
 # ── Model ─────────────────────────────────────────────────────────────────────

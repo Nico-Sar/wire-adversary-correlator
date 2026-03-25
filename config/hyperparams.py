@@ -4,6 +4,15 @@ config/hyperparams.py
 KDE preprocessing parameters and model hyperparameters.
 All values are ShYSh baseline defaults unless noted.
 """
+# ── Visit-Timeouts ───────────────────────────────────────────────────────
+
+
+VISIT_TIMEOUTS = {
+    "baseline": {"browser_ms": 30_000,  "curl_s": 60},
+    "tor":      {"browser_ms": 120_000, "curl_s": 300},
+    "nym":      {"browser_ms": 180_000, "curl_s": 600},
+    "vpn":      {"browser_ms": 60_000,  "curl_s": 120},
+}
 
 # ── KDE / Preprocessing ───────────────────────────────────────────────────────
 
@@ -12,7 +21,6 @@ KDE = {
     "t_sample":   0.1,      # Sampling period (seconds) → 10 samples/sec
     "window_len": 30,       # Window length in samples (= 3 seconds)
     "overlap":    0.5,      # Fractional overlap between windows
-    "duration":   60.0,     # Max seconds of flow to analyze
     "min_packets": 5,       # Discard flows with fewer packets than this
     "duration": 60.0,     # Max seconds of flow to analyze (ShYSh: 60s)
 }
@@ -45,3 +53,4 @@ EVAL = {
     "test_split":  0.15,
     "base_rate":   1.9e-4,  # ShYSh reference base rate for PR-AUC context
 }
+

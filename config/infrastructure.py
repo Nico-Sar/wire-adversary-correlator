@@ -34,10 +34,10 @@ BPF_INGRESS = {
     "nym":      "udp",
     "tor":      "tcp port 9001 or tcp port 443",
     "vpn":      "udp port 1194 or udp port 51820",
-    "baseline": "tcp port 80",
+    "baseline": f"tcp port 80 and host 10.1.0.3",
 }
 
-BPF_EGRESS = "tcp port 80"
+BPF_EGRESS = "tcp port 80 and host 10.1.0.2"
 
 # ── Proxy addresses on each client VM ─────────────────────────────────────────
 PROXY_MAP = {

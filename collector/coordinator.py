@@ -129,7 +129,7 @@ def stop_remote_capture(ssh_client, pid: str):
 # ── Visit trigger ─────────────────────────────────────────────────────────────
 
 def trigger_visit(client_ssh, url: str, proxy: str | None,
-                  visit_id: str) -> dict:
+                  visit_id: str, mode: str) -> dict:
     """
     Calls visit_trigger.py on the client VM via SSH.
     Returns metadata dict parsed from stdout JSON.
@@ -139,6 +139,7 @@ def trigger_visit(client_ssh, url: str, proxy: str | None,
         f"python3 ~/visit_trigger.py "
         f"--url {url} "
         f"--visit_id {visit_id} "
+        f"--mode {mode} "
         f"{proxy_arg}"
     )
     out = ssh_run(client_ssh, cmd, check=False)
@@ -211,12 +212,12 @@ def run_single_visit(url: str, mode: str,
 
     ingress_pid = ingress_pid_box[0]
     egress_pid  = egress_pid_box[0]
-
+    time.sleep(1.5)  # ensure tshark is fully up before triggering visit
     print(f"  [capture] started — ingress PID {ingress_pid}, egress PID {egress_pid}")
 
     # ── Step 2: Trigger the browser visit ─────────────────────────────────
     proxy = PROXY_MAP.get(mode)
-    visit_meta = trigger_visit(client_ssh, url, proxy, visit_id)
+    visit_meta = trigger_visit(client_ssh, url, proxy, visit_id, mode)
     t_visit_start = visit_meta.get("t_start", time.time())
     t_visit_end   = visit_meta.get("t_end",   time.time())
     visit_status  = visit_meta.get("status",  "unknown")

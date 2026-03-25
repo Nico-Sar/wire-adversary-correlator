@@ -22,7 +22,7 @@ from pathlib import Path
 import paramiko
 
 from config.infrastructure import (
-    BPF_EGRESS, BPF_INGRESS, CLIENTS, EGRESS_ROUTER,
+    BPF_EGRESS, BPF_INGRESS, CLIENT_GROUPS, CLIENTS, EGRESS_ROUTER,
     INGRESS_ROUTER, MAX_CLOCK_DRIFT_MS, PROXY_MAP, SNAPSHOT_LENGTH,
 )
 
@@ -268,6 +268,11 @@ def run_dataset(url_list_path: str, mode: str,
     Iterates over URLs × visits, calls run_single_visit for each,
     and appends VisitRecords to a .jsonl metadata log.
     """
+    if client_id not in CLIENT_GROUPS.get(mode, []):
+        print(f"[coordinator] WARNING: {client_id} is not the standard "
+              f"client for mode={mode}. Expected one of "
+              f"{CLIENT_GROUPS.get(mode)}.")
+
     urls = [
         line.strip()
         for line in Path(url_list_path).read_text().splitlines()
@@ -330,7 +335,7 @@ if __name__ == "__main__":
     parser.add_argument("--visits", type=int, default=80)
     parser.add_argument("--output", default="./data")
     parser.add_argument("--client", default="client1",
-                        choices=["client1", "client2"])     
+                        choices=list(CLIENTS.keys()))
     args = parser.parse_args()
 
     run_dataset(args.urls, args.mode, args.visits, Path(args.output), args.client)

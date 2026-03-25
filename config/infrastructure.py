@@ -24,34 +24,44 @@ WEB_SERVER = {
 }
 
 CLIENTS = {
-    "client1": {"host": "204.168.184.39",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.3"},
-    "client2": {"host": "204.168.181.115", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.4"},
+    "client1":     {"host": "204.168.184.39",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.3"},
+    "client2":     {"host": "204.168.181.115", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.4"},
+    "vpn-client1": {"host": "204.168.205.5",   "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.5"},
+    "vpn-client2": {"host": "95.216.218.124",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.6"},
+    "tor-client1": {"host": "89.167.102.181",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.7"},
+    "tor-client2": {"host": "204.168.194.172", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.8"},
+    "nym-client1": {"host": "204.168.204.120", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.9"},
+    "nym-client2": {"host": "204.168.201.84",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.10"},
+}
+
+CLIENT_GROUPS = {
+    "baseline": ["client1",     "client2"],
+    "vpn":      ["vpn-client1", "vpn-client2"],
+    "tor":      ["tor-client1", "tor-client2"],
+    "nym":      ["nym-client1", "nym-client2"],
 }
 
 BPF_INGRESS = {
-    "nym":      "udp",
+    "baseline": "tcp port 80 and host 10.1.0.3",
     "tor":      "tcp port 9001 or tcp port 443",
-    "vpn":      "udp port 1194 or udp port 51820",
-    "baseline": f"tcp port 80 and host 10.1.0.3",
+    "vpn":      "udp port 51820",
+    "nym":      "udp",
 }
 
 BPF_EGRESS = "tcp port 80 and host 10.1.0.2"
 
-# ── Proxy addresses on each client VM ─────────────────────────────────────────
 PROXY_MAP = {
-    "nym":      "socks5://127.0.0.1:1080",
+    "baseline": None,
     "tor":      "socks5://127.0.0.1:9050",
     "vpn":      None,
-    "baseline": None,
+    "nym":      "socks5://127.0.0.1:1080",
 }
 
-# ── Capture settings ──────────────────────────────────────────────────────────
-SNAPSHOT_LENGTH     = 96    # Headers only — never capture payload
-
-# ── Clock sync ────────────────────────────────────────────────────────────────
-MAX_CLOCK_DRIFT_MS = 5      # Abort if inter-router drift exceeds this
+SNAPSHOT_LENGTH    = 96
+MAX_CLOCK_DRIFT_MS = 5
 
 
 def get_client_private_ip(client_id: str) -> str:
-    """Return the private LAN IP for the given client_id (e.g. 'client1')."""
+    """Returns the private IP for a given client_id.
+    Used by quartet_builder for direction inference in pcap parsing."""
     return CLIENTS[client_id]["private_ip"]

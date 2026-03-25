@@ -14,6 +14,7 @@ KDE = {
     "overlap":    0.5,      # Fractional overlap between windows
     "duration":   60.0,     # Max seconds of flow to analyze
     "min_packets": 5,       # Discard flows with fewer packets than this
+    "duration": 60.0,     # Max seconds of flow to analyze (ShYSh: 60s)
 }
 
 # ── Model ─────────────────────────────────────────────────────────────────────

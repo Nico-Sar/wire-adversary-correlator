@@ -57,6 +57,15 @@ PROXY_MAP = {
     "nym":      "socks5://127.0.0.1:1080",
 }
 
+WEB_SERVER_PRIVATE_URL = "http://10.1.0.3"       # baseline, vpn
+WEB_SERVER_PUBLIC_URL  = "http://204.168.189.97"  # tor, nym
+
+URL_BASE = {
+    "baseline": WEB_SERVER_PRIVATE_URL,
+    "vpn":      WEB_SERVER_PRIVATE_URL,
+    "tor":      WEB_SERVER_PUBLIC_URL,
+    "nym":      WEB_SERVER_PUBLIC_URL,
+}
 SNAPSHOT_LENGTH    = 96
 MAX_CLOCK_DRIFT_MS = 5
 

@@ -23,7 +23,7 @@ import paramiko
 
 from config.infrastructure import (
     BPF_EGRESS, BPF_INGRESS, CLIENT_GROUPS, CLIENTS, EGRESS_ROUTER,
-    INGRESS_ROUTER, MAX_CLOCK_DRIFT_MS, PROXY_MAP, SNAPSHOT_LENGTH,
+    INGRESS_ROUTER, MAX_CLOCK_DRIFT_MS, PROXY_MAP, SNAPSHOT_LENGTH, URL_BASE,
 )
 
 
@@ -273,11 +273,10 @@ def run_dataset(url_list_path: str, mode: str,
               f"client for mode={mode}. Expected one of "
               f"{CLIENT_GROUPS.get(mode)}.")
 
-    urls = [
-        line.strip()
-        for line in Path(url_list_path).read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
+    url_base = URL_BASE[mode]
+    urls = [url_base + "/" + line.strip()
+            for line in Path(url_list_path).read_text().splitlines()
+            if line.strip() and not line.startswith("#")]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / f"{mode}_visits.jsonl"

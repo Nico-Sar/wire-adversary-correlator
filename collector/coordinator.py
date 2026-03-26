@@ -212,7 +212,7 @@ def run_single_visit(url: str, mode: str,
 
     ingress_pid = ingress_pid_box[0]
     egress_pid  = egress_pid_box[0]
-    time.sleep(1.5)  # ensure tshark is fully up before triggering visit
+    time.sleep(2.0)  # ensure tshark is fully up before triggering visit
     print(f"  [capture] started — ingress PID {ingress_pid}, egress PID {egress_pid}")
 
     # ── Step 2: Trigger the browser visit ─────────────────────────────────
@@ -223,6 +223,7 @@ def run_single_visit(url: str, mode: str,
     visit_status  = visit_meta.get("status",  "unknown")
 
     print(f"  [visit]   {visit_status} — {visit_meta.get('duration_s', '?')}s")
+    time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
 
     # ── Step 3: Stop captures ─────────────────────────────────────────────
     def stop_ingress():

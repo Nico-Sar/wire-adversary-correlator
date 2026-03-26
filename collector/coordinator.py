@@ -295,6 +295,20 @@ def run_dataset(url_list_path: str, mode: str,
         verify_clock_sync(ingress_ssh, egress_ssh)
 
         serial = 0
+        if log_path.exists():
+            with log_path.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        vid = rec.get("visit_id", "")
+                        if "_v" in vid:
+                            serial = max(serial, int(vid.split("_v")[-1]))
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+            print(f"[coordinator] resuming from serial {serial}")
 
         for url in urls:
             for visit_num in range(visits_per_url):

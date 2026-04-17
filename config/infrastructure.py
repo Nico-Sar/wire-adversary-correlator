@@ -45,7 +45,12 @@ BPF_INGRESS = {
     "baseline": "tcp port 80 and host 10.1.0.3",
     "tor":      "tcp port 9001 or tcp port 443",
     "vpn":      "udp port 51820",
-    "nym":      "udp",
+    # NymVPN v1.27.0 uses TCP port 9000/9001 for Sphinx packet transport
+    # to entry gateways. Traffic confirmed visible at ingress router enp7s0
+    # on 10.0.0.9 → entry_gateway_ip:9000 connections.
+    # Host guard added: port 9001 overlaps with Tor's default ORPort, so we
+    # restrict to nym-client1/nym-client2 private IPs to avoid cross-mode capture.
+    "nym":      "(tcp port 9000 or tcp port 9001) and (host 10.0.0.9 or host 10.0.0.10)",
 }
 
 BPF_EGRESS = "tcp port 80 and host 10.1.0.2"

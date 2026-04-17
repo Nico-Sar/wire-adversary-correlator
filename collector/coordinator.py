@@ -163,6 +163,8 @@ class VisitRecord:
     visit_status:    str
     ingress_pcap:    str
     egress_pcap:     str
+    ingress_bytes:   int = 0
+    egress_bytes:    int = 0
 
 
 def run_single_visit(url: str, mode: str,
@@ -257,6 +259,8 @@ def run_single_visit(url: str, mode: str,
         visit_status    = visit_status,
         ingress_pcap    = str(ingress_local),
         egress_pcap     = str(egress_local),
+        ingress_bytes   = ingress_local.stat().st_size,
+        egress_bytes    = egress_local.stat().st_size,
     )
 
 
@@ -315,6 +319,10 @@ def run_dataset(url_list_path: str, mode: str,
                 serial += 1
                 visit_id = f"{client_id}_v{serial:05d}"
                 print(f"[{serial}/{total}] {visit_id} — {url}")
+
+                if serial % 50 == 0:
+                    print(f"[coordinator] periodic clock sync check at visit {serial}...")
+                    verify_clock_sync(ingress_ssh, egress_ssh)  # aborts run on drift
 
                 try:
                     record = run_single_visit(

@@ -17,7 +17,8 @@ so it does not interfere with the passive wire-adversary capture in any way.
 
 Output: JSONL file, one record per visit.
   {"visit_id": "abc123", "url": "example.com", "mode": "nym",
-   "t_start": 1710000000.123, "t_end": 1710000018.456}
+   "t_start": 1710000000.123, "t_end": 1710000018.456,
+   "packet_bytes": 123456}
 """
 
 import json
@@ -31,19 +32,25 @@ class LabelLogger:
         with LabelLogger("logs/labels.jsonl", visit_id, url, mode) as logger:
             # browser visit happens here
             pass
+            logger.set_packet_size(pcap_bytes)
         # t_start and t_end are recorded automatically on enter/exit
     """
 
     def __init__(self, log_path: str, visit_id: str, url: str, mode: str):
         self.log_path = Path(log_path)
         self.record = {
-            "visit_id": visit_id,
-            "url":      url,
-            "mode":     mode,
-            "t_start":  None,
-            "t_end":    None,
-            "status":   "started",
+            "visit_id":     visit_id,
+            "url":          url,
+            "mode":         mode,
+            "t_start":      None,
+            "t_end":        None,
+            "status":       "started",
+            "packet_bytes": None,
         }
+
+    def set_packet_size(self, bytes_captured: int):
+        """Set the total bytes captured during the visit (from pcap)."""
+        self.record["packet_bytes"] = bytes_captured
 
     def __enter__(self):
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

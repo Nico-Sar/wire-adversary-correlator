@@ -10,9 +10,8 @@ Design principles:
     so no positional correspondence exists in the raw arrays. The pairs array
     records (ingress_idx, egress_idx, label=1) for positive pairs only.
     Negative pairs are generated at training time in dataset.py.
-  - Split by URL: url_index stores the sorted rank of each visit's URL,
-    allowing dataset.py to reproduce the 70/15/15 train/val/test split
-    by URL (not by visit), following ShYSh.
+  - Split by URL: dataset.py recomputes the 70/15/15 train/val/test split
+    from ingress_urls/egress_urls at training time, following ShYSh.
 
 Output .npz arrays:
   X_ingress_up      (N, n_windows, L)  float32
@@ -24,7 +23,6 @@ Output .npz arrays:
   ingress_urls      (N,)               str
   egress_urls       (N,)               str
   pairs             (N, 3)             int32 (ingress_idx, egress_idx, label)
-  url_index         (N,)               int32 (sorted URL rank, 0-based)
   modes             (N,)               str
 
 Usage:
@@ -104,12 +102,10 @@ def build_dataset(labels_jsonl: str,
 
     log.info(f"Found {len(records)} successful visits to process")
 
-    # ── 2. Build sorted URL index for train/val/test splitting ────────────
-    # Sorting URLs alphabetically gives a stable, reproducible ordering.
-    # dataset.py uses this index to assign train (70%) / val (15%) / test (15%)
-    # by URL rank — identical to ShYSh's split strategy.
-    all_urls    = sorted(set(rec["url"] for rec in records))
-    url_to_rank = {url: rank for rank, url in enumerate(all_urls)}
+    # ── 2. Log unique URL count ───────────────────────────────────────────
+    # dataset.py recomputes the 70/15/15 URL-based split from ingress_urls /
+    # egress_urls directly, so no pre-computed index needs to be saved here.
+    all_urls = sorted(set(rec["url"] for rec in records))
     log.info(f"Dataset contains {len(all_urls)} unique URLs")
 
     # ── 3. Infer mode for KDE params ──────────────────────────────────────
@@ -124,7 +120,6 @@ def build_dataset(labels_jsonl: str,
     egress_down_list  = []
     visit_ids_list    = []
     urls_list         = []
-    url_index_list    = []
     modes_list        = []
     skipped           = 0
 
@@ -167,12 +162,38 @@ def build_dataset(labels_jsonl: str,
             skipped += 1
             continue
 
-        # Check minimum packet count
-        min_pkts = mode_kde.get("min_packets", KDE.get("min_packets", 5))
-        total_pkts = (quartet["n_ingress_up"] + quartet["n_ingress_down"] +
-                      quartet["n_egress_up"]  + quartet["n_egress_down"])
-        if total_pkts < min_pkts:
-            log.warning(f"  [{i+1}/{len(records)}] Too few packets ({total_pkts}) for {visit_id} — skipping")
+        # Check minimum packet count per stream (not in total).
+        # A visit where one stream is empty produces all-zero windows for that
+        # stream, which misleads training with corrupted positive pairs.
+        min_pkts_per_stream = KDE["min_packets"]  # 5, from config/hyperparams.py
+        stream_counts = {
+            "ingress_up":   quartet["n_ingress_up"],
+            "ingress_down": quartet["n_ingress_down"],
+            "egress_up":    quartet["n_egress_up"],
+            "egress_down":  quartet["n_egress_down"],
+        }
+        low_streams = [k for k, v in stream_counts.items() if v < min_pkts_per_stream]
+        if low_streams:
+            log.warning(
+                f"  [{i+1}/{len(records)}] Low per-stream packet count "
+                f"{low_streams} for {visit_id} — skipping"
+            )
+            skipped += 1
+            continue
+
+        # Guard: all four streams must have produced at least one window.
+        # slice_windows returns shape (0, L) if the KDE signal is shorter than
+        # window_len (3 s). A zero-window visit would be padded to all-zeros
+        # and labelled as a positive pair, corrupting training.
+        zero_streams = [
+            k for k in ("ingress_up", "ingress_down", "egress_up", "egress_down")
+            if quartet[k].shape[0] == 0
+        ]
+        if zero_streams:
+            log.warning(
+                f"  [{i+1}/{len(records)}] Zero windows in {zero_streams} "
+                f"for {visit_id} — skipping"
+            )
             skipped += 1
             continue
 
@@ -182,7 +203,6 @@ def build_dataset(labels_jsonl: str,
         egress_down_list.append(quartet["egress_down"])
         visit_ids_list.append(visit_id)
         urls_list.append(url)
-        url_index_list.append(url_to_rank[url])
         modes_list.append(mode)
 
         if (i + 1) % 50 == 0:
@@ -219,7 +239,6 @@ def build_dataset(labels_jsonl: str,
 
     visit_ids = np.array(visit_ids_list)
     urls      = np.array(urls_list)
-    url_index = np.array(url_index_list, dtype=np.int32)
     modes_arr = np.array(modes_list)
 
     # ── 6. Independent shuffle for leakage prevention ────────────────────
@@ -237,7 +256,6 @@ def build_dataset(labels_jsonl: str,
     egress_visit_ids  = visit_ids[egress_order]
     ingress_urls      = urls[ingress_order]
     egress_urls       = urls[egress_order]
-    ingress_url_index = url_index[ingress_order]
 
     # ── 7. Build positive pairs index ────────────────────────────────────
     ingress_id_to_idx = {vid: idx for idx, vid in enumerate(ingress_visit_ids)}
@@ -264,7 +282,6 @@ def build_dataset(labels_jsonl: str,
         ingress_urls=ingress_urls,
         egress_urls=egress_urls,
         pairs=pairs,
-        url_index=ingress_url_index,
         modes=modes_arr[ingress_order],
     )
 

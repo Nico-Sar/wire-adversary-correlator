@@ -19,6 +19,10 @@ def normalize_timestamps(packets: list[dict]) -> list[dict]:
     """
     Converts absolute epoch timestamps to relative timestamps starting at t=0.
     Mirrors ShYSh's use of relative timestamps for alignment independence.
+
+    NOTE: Not used in the main pipeline. Timestamp normalization is handled by
+    carve_time_window() in windower.py, which re-zeros timestamps after carving
+    the visit window. This function is kept because tests/test_kde.py covers it.
     """
     if not packets:
         return []
@@ -55,26 +59,35 @@ def kde_shape(timestamps: list[float],
         duration:   max flow duration to analyze (seconds)
         sigma:      Gaussian kernel width (seconds)
         t_sample:   grid sampling period (seconds)
+
+    Implementation note:
+        The grid is extended by 3σ on each side before computing the Gaussian
+        kernels, then cropped back to [0, duration]. This prevents boundary
+        truncation of Gaussian tails for packets near t=0 or t=duration
+        (most significant for Nym where σ = 0.5 s).
     """
     n_samples = int(np.ceil(duration / t_sample))
-    grid = np.arange(n_samples) * t_sample   # shape: (n_samples,)
 
     if not timestamps:
         return np.zeros(n_samples, dtype=np.float32)
 
+    t_arr = np.array(timestamps, dtype=np.float64)
+
+    # Extend grid by 3σ on each side so boundary packets get full kernel support.
+    n_pad   = int(np.ceil(3.0 * sigma / t_sample))    # padding samples per side
+    n_total = n_samples + 2 * n_pad
+    # Grid starts at −n_pad × t_sample (i.e. before t=0)
+    grid = (np.arange(n_total) - n_pad) * t_sample    # shape: (n_total,)
+
     # Each packet is a Dirac delta convolved with a Gaussian kernel.
-    # Vectorised: for each grid point t, sum Gaussian(t - t_i) over all packets.
-    # Shape: (n_samples, 1) - (1, n_packets) → (n_samples, n_packets)
-    t_arr  = np.array(timestamps, dtype=np.float64)        # (n_packets,)
-    diff   = grid[:, None] - t_arr[None, :]                # (n_samples, n_packets)
-    kernel = np.exp(-0.5 * (diff / sigma) ** 2)            # (n_samples, n_packets)
-    shape  = kernel.sum(axis=1)                             # (n_samples,)
+    diff   = grid[:, None] - t_arr[None, :]            # (n_total, n_packets)
+    kernel = np.exp(-0.5 * (diff / sigma) ** 2)        # (n_total, n_packets)
+    shape  = kernel.sum(axis=1)                         # (n_total,)
 
     # Normalize: sum(shape) == len(timestamps)
     # The raw sum of the unnormalized Gaussian is sigma * sqrt(2π) per packet.
-    # We divide by that factor to recover the correct packet count integral.
     norm_factor = sigma * np.sqrt(2.0 * np.pi) / t_sample
-    if norm_factor > 0:
-        shape /= norm_factor
+    shape /= norm_factor
 
-    return shape.astype(np.float32)
+    # Crop: slice [n_pad : n_pad + n_samples] corresponds exactly to t ∈ [0, duration)
+    return shape[n_pad : n_pad + n_samples].astype(np.float32)

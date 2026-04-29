@@ -59,6 +59,27 @@ class TestSliceWindows:
         windows = slice_windows(signal, window_len=30, overlap=0.5)
         assert windows.shape[0] == 0
 
+    def test_tail_zero_padded(self):
+        """Tail is zero-padded so the last window is always full (ShYSh behaviour).
+
+        signal=65, window=30, step=15: tail=(65-30)%15=5, pad=10 → 75 samples → 4 windows.
+        The 4th window covers signal[45:75] = 20 real samples + 10 zeros.
+        """
+        signal = np.ones(65, dtype=np.float32)
+        windows = slice_windows(signal, window_len=30, overlap=0.5)
+        assert windows.shape[0] == 4
+        np.testing.assert_array_equal(windows[3, :20], np.ones(20, dtype=np.float32))
+        np.testing.assert_array_equal(windows[3, 20:], np.zeros(10, dtype=np.float32))
+
+    def test_exact_fit_unchanged(self):
+        """Signal whose length already satisfies (n-window)%step==0 is not padded."""
+        # 300 samples = baseline mode KDE grid: (300-30)%15=0, no padding expected.
+        signal = np.ones(300, dtype=np.float32)
+        windows = slice_windows(signal, window_len=30, overlap=0.5)
+        assert windows.shape[0] == 19
+        # All windows must be all-ones (no padding artefacts).
+        np.testing.assert_array_equal(windows, np.ones((19, 30), dtype=np.float32))
+
 
 class TestCarveTimeWindow:
 

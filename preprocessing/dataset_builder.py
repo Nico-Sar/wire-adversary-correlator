@@ -147,6 +147,7 @@ def build_dataset(labels_jsonl: str,
             skipped += 1
             continue
 
+
         try:
             quartet = compute_quartet(
                 ingress_pcap=str(ingress_pcap),
@@ -214,28 +215,25 @@ def build_dataset(labels_jsonl: str,
     if N == 0:
         raise ValueError("No valid visits after processing — cannot build dataset")
 
-    # ── 5. Pad windows to uniform shape ──────────────────────────────────
-    # Different visits may have different n_windows due to variable flow
-    # duration. Pad with zeros to the maximum window count.
-    max_windows = max(
-        max(a.shape[0] for a in ingress_up_list),
-        max(a.shape[0] for a in ingress_down_list),
-        max(a.shape[0] for a in egress_up_list),
-        max(a.shape[0] for a in egress_down_list),
-    )
+    # ── 5. Stack windows — all visits must produce identical window counts ────
+    # Within a single mode, kde_shape() returns a fixed-length grid
+    # (ceil(duration/t_sample) samples), and slice_windows pads the signal tail
+    # so (n_samples - window_len) % step == 0.  Together these guarantee that
+    # every visit produces the same n_windows — no zero-padding needed.
+    n_windows_all = [a.shape[0] for a in ingress_up_list]
+    if len(set(n_windows_all)) != 1:
+        raise ValueError(
+            f"Inconsistent window counts across visits: {set(n_windows_all)}. "
+            "Ensure all visits use the same mode and KDE duration."
+        )
+    n_windows  = n_windows_all[0]
     window_len = ingress_up_list[0].shape[1]
-    log.info(f"Padding to {max_windows} windows × {window_len} samples")
+    log.info(f"Stacking {N} visits × {n_windows} windows × {window_len} samples")
 
-    def pad_to(arrays, n_windows, wlen):
-        out = np.zeros((len(arrays), n_windows, wlen), dtype=np.float32)
-        for i, a in enumerate(arrays):
-            out[i, :a.shape[0], :] = a
-        return out
-
-    X_ingress_up   = pad_to(ingress_up_list,   max_windows, window_len)
-    X_ingress_down = pad_to(ingress_down_list, max_windows, window_len)
-    X_egress_up    = pad_to(egress_up_list,    max_windows, window_len)
-    X_egress_down  = pad_to(egress_down_list,  max_windows, window_len)
+    X_ingress_up   = np.stack(ingress_up_list)
+    X_ingress_down = np.stack(ingress_down_list)
+    X_egress_up    = np.stack(egress_up_list)
+    X_egress_down  = np.stack(egress_down_list)
 
     visit_ids = np.array(visit_ids_list)
     urls      = np.array(urls_list)
@@ -304,7 +302,7 @@ if __name__ == "__main__":
     parser.add_argument("--output",   required=True,
                         help="Output .npz path")
     parser.add_argument("--mode",     default=None,
-                        help="Filter by mode (baseline/tor/vpn/nym)")
+                        help="Filter by mode (baseline/tor/vpn/nym5/nym2)")
     parser.add_argument("--seed",     type=int,   default=42)
     parser.add_argument("--sigma",    type=float, default=None)
     parser.add_argument("--duration", type=float, default=None)

@@ -17,8 +17,11 @@ Nym/Tor/VPN modes where the first egress packet may originate from an
 exit node IP rather than the router's own private IP.
 """
 
+import logging
 import shutil
 import subprocess
+
+log = logging.getLogger(__name__)
 
 
 def extract_packets(pcap_path: str,
@@ -57,8 +60,19 @@ def extract_packets(pcap_path: str,
         ],
         capture_output=True,
         text=True,
-        check=True,
     )
+    if result.returncode == 14:
+        # tshark exit 14: truncated final pcapng block — the packets written
+        # before truncation are fully valid and present in result.stdout.
+        log.warning(
+            "tshark exited with code 14 (truncated pcap block) for %s — "
+            "parsing output up to truncation point", pcap_path
+        )
+    elif result.returncode != 0:
+        raise RuntimeError(
+            f"tshark failed (exit {result.returncode}) on {pcap_path}:\n"
+            f"{result.stderr.strip()}"
+        )
 
     packets = []
 

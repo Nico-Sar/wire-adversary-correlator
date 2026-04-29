@@ -1,0 +1,6 @@
+# Quick test URL list for nym5 — 4 URLs, no large downloads
+# Excludes PDF/MP3/MP4 which stall under 43s Sphinx visit window
+page_html_1.html
+page_heavy_dashboard_1.html
+data_json_1.json
+data_json_2.json

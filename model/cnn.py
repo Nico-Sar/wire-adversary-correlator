@@ -31,7 +31,9 @@ Full model
 ----------
   [cnn_up(i_up, e_up), cnn_down(i_down, e_down)]  each → (batch, fc_hidden)
   Concatenate                                             → (batch, 2*fc_hidden)
-  Linear(2*fc_hidden, 1) + Sigmoid                        → (batch, 1)
+  Linear(2*fc_hidden, 1)      → (batch, 1) raw logit
+  [sigmoid applied by BCEWithLogitsLoss during training,
+   or explicitly via torch.sigmoid() at inference]
 """
  
 import torch
@@ -102,9 +104,10 @@ class DualCNNCorrelator(nn.Module):
         self.cnn_down = SingleChannelCNN(**cnn_kwargs)
  
         fc_hidden = cnn_kwargs.get("fc_hidden", MODEL["fc_hidden"])
+        # No Sigmoid here — BCEWithLogitsLoss applies it internally during training.
+        # Apply torch.sigmoid() explicitly at inference time (see flow_score).
         self.classifier = nn.Sequential(
             nn.Linear(2 * fc_hidden, 1),
-            nn.Sigmoid(),
         )
  
     def forward(self,
@@ -135,5 +138,5 @@ class DualCNNCorrelator(nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            scores = self.forward(ingress_up, ingress_down, egress_up, egress_down)
-        return float(scores.mean().item())
+            logits = self.forward(ingress_up, ingress_down, egress_up, egress_down)
+        return float(torch.sigmoid(logits).mean().item())

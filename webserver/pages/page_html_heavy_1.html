@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Quantum Computing Milestone: 1000-Qubit Processor Unveiled</title>
+  <!-- 3 CSS · 3 JS · 2 img · 2 API = 10 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/reset.css">
+  <link rel="stylesheet" href="/assets/css/main.css">
+  <link rel="stylesheet" href="/assets/css/typography.css">
+  <script src="/assets/js/analytics.js" defer></script>
+  <script src="/assets/js/search.js" defer></script>
+  <script src="/assets/js/events.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="primary-nav">
+      <a href="/">Home</a>
+      <a href="/technology">Technology</a>
+      <a href="/science">Science</a>
+      <a href="/business">Business</a>
+      <a href="/opinion">Opinion</a>
+      <a href="/video">Video</a>
+    </nav>
+    <div class="breaking-banner">BREAKING: Major quantum computing announcement reshapes the industry landscape</div>
+  </header>
+
+  <main class="article-layout">
+    <article class="lead-article">
+      <header class="article-header">
+        <div class="article-meta">
+          <span class="category-tag">Technology</span>
+          <span class="dot-separator">·</span>
+          <time datetime="2025-11-12">November 12, 2025</time>
+          <span class="dot-separator">·</span>
+          <span class="read-time">8 min read</span>
+        </div>
+        <h1 class="headline">Quantum Computing Milestone: 1000-Qubit Processor Unveiled, Achieving Room-Temperature Stability for the First Time</h1>
+        <p class="deck">Researchers at the joint Hetzner–KU Leuven Quantum Lab have demonstrated coherence times exceeding 10 milliseconds at 20°C, a result that could accelerate deployment of quantum hardware by a decade.</p>
+        <div class="byline">
+          <img src="/assets/img/avatar-01.svg" alt="Author portrait" loading="eager" width="40" height="40" class="author-avatar">
+          <div class="byline-text">
+            <span class="author-name">Dr. Elspeth Varnath</span>
+            <span class="author-role">Senior Technology Correspondent</span>
+          </div>
+        </div>
+      </header>
+
+      <figure class="lead-image">
+        <img src="/assets/img/hero-1.svg" alt="Quantum processor photograph" loading="eager" width="880" height="460" class="hero-image">
+        <figcaption>The 1000-qubit chip mounted in its room-temperature housing. Photo: KU Leuven Quantum Lab / Hetzner Cloud.</figcaption>
+      </figure>
+
+      <div class="article-body">
+        <p class="lead-paragraph">For decades, quantum computers have been laboratory curiosities requiring cryogenic cooling to within a fraction of a degree above absolute zero. Today, that changed. A joint team from Hetzner Cloud's research division and KU Leuven's Quantum Information Science group published results in <em>Nature Physics</em> demonstrating a 1024-qubit superconducting processor that maintains quantum coherence for 10.3 milliseconds at room temperature — more than five orders of magnitude longer than previous room-temperature results.</p>
+
+        <p>The implications are enormous. Current quantum computers, from IBM's Osprey to Google's Sycamore, require dilution refrigerators that cost upwards of $15 million per unit and consume megawatts of power. The new architecture, which the team calls "topological spin-lattice confinement" (TSLC), uses engineered defects in a silicon-germanium substrate to trap qubits in potential wells that persist without active cooling.</p>
+
+        <h2>How the Breakthrough Works</h2>
+        <p>The TSLC architecture relies on a carefully engineered lattice of silicon-germanium with precisely placed phosphorus dopant atoms. When cooled to room temperature after an initial calibration run at 4 Kelvin, the qubits — each represented by the spin of a single phosphorus electron — remain stable because the surrounding lattice geometry creates an energy barrier high enough to prevent thermal decoherence.</p>
+
+        <p>"We essentially carved out a quantum enclave inside a classical material," said Professor Amara Ndiaye, lead theorist on the project. "The lattice geometry does the work that dilution refrigerators previously had to do. Room temperature is no longer an adversary — it is almost irrelevant to the qubit's local environment."</p>
+
+        <blockquote class="pull-quote">
+          <p>"Room temperature is no longer an adversary — it is almost irrelevant to the qubit's local environment."</p>
+          <cite>— Prof. Amara Ndiaye, KU Leuven Quantum Information Science</cite>
+        </blockquote>
+
+        <h2>Benchmarks and Independent Verification</h2>
+        <p>The team ran Grover's search algorithm on a 100-qubit subset, achieving a 94.7% correct-answer rate on problems with up to 10^30 possible states. This performance, verified independently by researchers at ETH Zürich and the National Institute of Standards and Technology, places the processor comfortably in the range where quantum advantage over classical supercomputers becomes practically relevant for certain optimization and sampling problems.</p>
+
+        <p>Quantum volume — IBM's composite metric capturing qubit count, connectivity, and error rates — reached 4096, compared to 512 for the best commercially available system. However, critics note that quantum volume is not universally accepted as the definitive benchmark.</p>
+
+        <h2>Commercial Pathway</h2>
+        <p>Hetzner Cloud, the German cloud-computing provider best known for its competitively priced VPS and bare-metal services, announced a €2.3 billion investment program to commercialize the technology. The company said it expects to offer quantum-cloud services through its Nuremberg and Helsinki data centres by late 2027, initially as an adjunct to classical HPC workloads.</p>
+
+        <p>The road to commercialisation is not trivial. Manufacturing yield for the TSLC substrate currently sits at about 12%, meaning that most wafers produced are unusable. "We will need at least 18 months of process engineering before we can talk about reliably making these chips at scale," said Hetzner CTO Lukas Steinbach at today's press briefing.</p>
+
+        <h2>Cryptographic Implications</h2>
+        <p>Any large-scale quantum processor capable of running Shor's algorithm at scale could break RSA and elliptic-curve cryptography that underpins most of today's internet security. Post-quantum cryptography standards — CRYSTALS-Kyber and CRYSTALS-Dilithium, finalized by NIST in 2024 — were designed precisely to withstand this threat. Security researchers urged organizations to accelerate migration away from legacy public-key algorithms.</p>
+
+        <p>"Today's announcement is not an immediate threat to deployed encryption," said Dr. Christine Holst of the Belgian Centre for Cybersecurity. "But it is a reminder that the migration window to post-quantum algorithms is finite. Organizations who have not begun their inventory of cryptographic assets should start now."</p>
+
+        <h2>Reactions from the Field</h2>
+        <p>IBM Quantum called the results "extraordinary if confirmed at full scale" and noted that its own roadmap includes room-temperature qubits as a long-term research goal. Google DeepMind's quantum team said it was "studying the paper closely." Several venture capitalists noted that the announcement had already triggered a wave of interest in quantum hardware startups.</p>
+
+        <p>The full paper, "Room-Temperature Quantum Coherence in Silicon-Germanium Topological Spin-Lattice Confinement," is available on the <em>Nature Physics</em> website behind a paywall, with a preprint on arXiv at 2511.04927.</p>
+      </div>
+
+      <footer class="article-footer">
+        <div class="tags-row">
+          <span class="tag">Quantum Computing</span>
+          <span class="tag">Physics</span>
+          <span class="tag">KU Leuven</span>
+          <span class="tag">Hetzner</span>
+          <span class="tag">Cryptography</span>
+        </div>
+        <div class="share-row">
+          <button type="button" class="share-btn">Share</button>
+          <button type="button" class="save-btn">Save</button>
+        </div>
+      </footer>
+    </article>
+
+    <aside class="sidebar">
+      <section class="trending-module">
+        <h3>Trending in Technology</h3>
+        <ol id="trending-list"><li>Loading…</li></ol>
+      </section>
+      <section class="newsletter-module">
+        <h3>Tech Daily Newsletter</h3>
+        <p>The most important technology stories, explained.</p>
+        <form action="#" method="post" class="newsletter-form">
+          <input type="email" placeholder="your@email.com" name="email" required>
+          <button type="submit">Subscribe</button>
+        </form>
+      </section>
+      <div id="stats-widget"></div>
+    </aside>
+  </main>
+
+  <footer class="site-footer">
+    <p>Traffic-analysis research page &mdash; page_html_heavy_1 &mdash; 10 sub-resources</p>
+  </footer>
+
+  <script>
+  (function () {
+    fetch('/assets/api/trending.json').then(function(r){ return r.json(); }).then(function(d){
+      var list = document.getElementById('trending-list');
+      if (!list || !d.trending) return;
+      list.innerHTML = d.trending.slice(0, 5).map(function(item){
+        return '<li>' + (item.title || item.slug || JSON.stringify(item)) + '</li>';
+      }).join('');
+    }).catch(function(){});
+
+    fetch('/assets/api/stats.json').then(function(r){ return r.json(); }).then(function(d){
+      var w = document.getElementById('stats-widget');
+      if (w) w.setAttribute('data-loaded', '1');
+    }).catch(function(){});
+  })();
+  </script>
+</body>
+</html>

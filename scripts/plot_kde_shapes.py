@@ -4,8 +4,8 @@ scripts/plot_kde_shapes.py
 Generates a KDE shape comparison figure from pilot .npz datasets.
 
 Shows ingress_down and egress_down KDE density waves for the same URL
-visited via Baseline, Tor, VPN, and Nym — illustrating how each anonymity
-system distorts the traffic shape at the wire level.
+visited via Baseline, Tor, VPN, Nym-5hop, and Nym-2hop — illustrating how
+each anonymity system distorts the traffic shape at the wire level.
 
 Rows:
   0 — Ingress downstream (KDE density)
@@ -16,13 +16,14 @@ Usage (from repo root):
         --baseline  data/pilot/baseline_dataset.npz \
         --tor       data/pilot/tor_dataset.npz \
         --vpn       data/pilot/vpn_dataset.npz \
-        --nym       data/pilot/nym_dataset.npz \
+        --nym5      data/pilot/nym5_dataset.npz \
+        --nym2      data/pilot/nym2_dataset.npz \
         --url       "page_html_1.html" \
         --output    figures/kde_shape_comparison.png
 
 The script picks the first visit for the given URL in each dataset.
 If --url is omitted it uses the first URL alphabetically.
---nym is optional; the Nym column is omitted if not provided.
+--nym5 and --nym2 are optional; columns are omitted if not provided.
 """
 
 import argparse
@@ -44,15 +45,18 @@ MODE_COLORS = {
     "Baseline": KUL_NAVY,
     "Tor":      KUL_TEAL,
     "VPN":      KUL_ORANGE,
-    "Nym":      "#6C3D91",
+    "Nym-5hop": "#6C3D91",
+    "Nym-2hop": "#A855B5",
 }
 
-# ── Per-mode KDE params (mirrors config/hyperparams.py) ────────────────────
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from config.hyperparams import KDE, KDE_PER_MODE as _KDE_PER_MODE
+
+# Build plot params from canonical config so this script never goes stale.
 KDE_PER_MODE = {
-    "baseline": {"duration": 30.0,  "sigma": 0.125, "t_sample": 0.1},
-    "tor":      {"duration": 60.0,  "sigma": 0.25,  "t_sample": 0.1},
-    "vpn":      {"duration": 30.0,  "sigma": 0.125, "t_sample": 0.1},
-    "nym":      {"duration": 120.0, "sigma": 0.5,   "t_sample": 0.1},
+    mode: {**_KDE_PER_MODE.get(mode, {}), "t_sample": KDE["t_sample"]}
+    for mode in ("baseline", "tor", "vpn", "nym5", "nym2")
 }
 
 
@@ -222,8 +226,10 @@ if __name__ == "__main__":
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--tor",      required=True)
     parser.add_argument("--vpn",      required=True)
-    parser.add_argument("--nym",      default=None,
-                        help="Nym .npz dataset (column omitted if not provided)")
+    parser.add_argument("--nym5",     default=None,
+                        help="Nym 5-hop .npz dataset (column omitted if not provided)")
+    parser.add_argument("--nym2",     default=None,
+                        help="Nym 2-hop .npz dataset (column omitted if not provided)")
     parser.add_argument("--url",      default=None,
                         help="Partial URL string to match (e.g. 'page_html_1')")
     parser.add_argument("--output",   default="figures/kde_shape_comparison.png")
@@ -234,7 +240,9 @@ if __name__ == "__main__":
         "Tor":      args.tor,
         "VPN":      args.vpn,
     }
-    if args.nym:
-        datasets["Nym"] = args.nym
+    if args.nym5:
+        datasets["Nym-5hop"] = args.nym5
+    if args.nym2:
+        datasets["Nym-2hop"] = args.nym2
 
     plot_comparison(datasets, args.url, args.output)

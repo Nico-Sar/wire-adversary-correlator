@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — 2</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+  <link rel="stylesheet" href="/assets/css/forms.css">
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <link rel="stylesheet" href="/assets/css/animations.css">
+  <link rel="stylesheet" href="/assets/css/theme.css">
+  <link rel="stylesheet" href="/assets/css/reset.css">
+  <link rel="stylesheet" href="/assets/css/dark-mode.css">
+  <script src="/assets/js/analytics.js" defer></script>
+  <script src="/assets/js/router.js" defer></script>
+  <script src="/assets/js/api-client.js" defer></script>
+  <script src="/assets/js/app.js" defer></script>
+  <script src="/assets/js/charts.js" defer></script>
+  <script src="/assets/js/polyfills.js" defer></script>
+  <script src="/assets/js/utils.js" defer></script>
+  <script src="/assets/js/ui.js" defer></script>
+  <script src="/assets/js/auth.js" defer></script>
+  <script src="/assets/js/vendor.js" defer></script>
+  <script src="/assets/js/events.js" defer></script>
+</head>
+<body>
+  <header id="site-header">
+    <nav>
+      <a href="/">Home</a>
+      <a href="/gallery">Gallery</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/docs">Docs</a>
+    </nav>
+    <h1>Documentation 2</h1>
+  </header>
+  <main>
+    <section class="media-grid">
+      <img src="/assets/img/hero-3.svg" alt="hero-3" loading="lazy" width="320" height="220">
+      <img src="/assets/img/banner-01.svg" alt="banner-01" loading="lazy" width="320" height="220">
+      <img src="/assets/img/thumb-02.svg" alt="thumb-02" loading="lazy" width="320" height="220">
+      <img src="/assets/img/avatar-01.svg" alt="avatar-01" loading="lazy" width="320" height="220">
+      <img src="/assets/img/thumb-08.svg" alt="thumb-08" loading="lazy" width="320" height="220">
+      <img src="/assets/img/thumb-06.svg" alt="thumb-06" loading="lazy" width="320" height="220">
+      <img src="/assets/img/hero-1.svg" alt="hero-1" loading="lazy" width="320" height="220">
+      <img src="/assets/img/avatar-04.svg" alt="avatar-04" loading="lazy" width="320" height="220">
+      <img src="/assets/img/hero-5.svg" alt="hero-5" loading="lazy" width="320" height="220">
+      <img src="/assets/img/thumb-03.svg" alt="thumb-03" loading="lazy" width="320" height="220">
+      <img src="/assets/img/banner-03.svg" alt="banner-03" loading="lazy" width="320" height="220">
+      <img src="/assets/img/thumb-10.svg" alt="thumb-10" loading="lazy" width="320" height="220">
+    </section>
+    <section class="content">
+      <h2>page_heavy_docs_2</h2>
+      <p>
+        7 stylesheets &bull; 11 scripts &bull;
+        12 images &bull; 4 API calls &bull;
+        35 total requests
+      </p>
+      <div id="app-root" data-page="page_heavy_docs_2"></div>
+    </section>
+  </main>
+  <footer>
+    <p>Traffic-analysis research page &mdash; page_heavy_docs_2</p>
+  </footer>
+  <script>
+  (function() {
+    fetch('/assets/api/users.json').then(r=>r.json()).then(d=>void d);
+    fetch('/assets/api/comments.json').then(r=>r.json()).then(d=>void d);
+    fetch('/assets/api/trending.json').then(r=>r.json()).then(d=>void d);
+    fetch('/assets/api/config.json').then(r=>r.json()).then(d=>void d);
+  })();
+  </script>
+</body>
+</html>

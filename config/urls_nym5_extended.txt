@@ -1,0 +1,75 @@
+# nym5 (5-hop Sphinx mixnet) URL list — extended pilot
+# 60 URLs: 30 HTML + 30 JSON
+#
+# Excluded vs full urls.txt:
+#   - page_heavy_*    (15 URLs): multi-resource pages saturate the 43s visit window
+#   - doc_pdf_*       (10 URLs): large downloads stall under nym5 latency
+#   - archive_zip_*   (10 URLs): large binary, unreliable under 600s timeout
+#   - audio_mp3_*     (10 URLs): streaming media, not meaningful under Sphinx delay
+#   - video_mp4_*     (10 URLs): same reason
+#
+# URL split (70/15/15 by URL): train≈42, val≈9, test≈9
+
+# ── HTML pages (30) ──────────────────────────────────────────────────────────
+page_html_1.html
+page_html_2.html
+page_html_3.html
+page_html_4.html
+page_html_5.html
+page_html_6.html
+page_html_7.html
+page_html_8.html
+page_html_9.html
+page_html_10.html
+page_news_1.html
+page_news_2.html
+page_news_3.html
+page_news_4.html
+page_news_5.html
+page_shop_1.html
+page_shop_2.html
+page_shop_3.html
+page_shop_4.html
+page_shop_5.html
+page_social_1.html
+page_social_2.html
+page_social_3.html
+page_social_4.html
+page_social_5.html
+page_forum_1.html
+page_forum_2.html
+page_forum_3.html
+page_forum_4.html
+page_forum_5.html
+
+# ── JSON (30) ─────────────────────────────────────────────────────────────────
+data_json_1.json
+data_json_2.json
+data_json_3.json
+data_json_4.json
+data_json_5.json
+data_json_6.json
+data_json_7.json
+data_json_8.json
+data_json_9.json
+data_json_10.json
+crypto_tx_1.json
+crypto_tx_2.json
+crypto_tx_3.json
+crypto_tx_4.json
+crypto_tx_5.json
+crypto_tx_6.json
+crypto_tx_7.json
+crypto_tx_8.json
+crypto_tx_9.json
+crypto_tx_10.json
+crypto_block_1.json
+crypto_block_2.json
+crypto_block_3.json
+crypto_block_4.json
+crypto_block_5.json
+crypto_wallet_1.json
+crypto_wallet_2.json
+crypto_wallet_3.json
+crypto_wallet_4.json
+crypto_wallet_5.json

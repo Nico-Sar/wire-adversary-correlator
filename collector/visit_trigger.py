@@ -26,8 +26,9 @@ BINARY_EXTENSIONS = {'.pdf', '.zip', '.mp3', '.mp4', '.bin'}
 VISIT_TIMEOUTS = {
     "baseline": {"browser_ms": 30_000,  "curl_s": 60},
     "tor":      {"browser_ms": 120_000, "curl_s": 300},
-    "nym":      {"browser_ms": 180_000, "curl_s": 600},
     "vpn":      {"browser_ms": 60_000,  "curl_s": 120},
+    "nym5":     {"browser_ms": 180_000, "curl_s": 600},
+    "nym2":     {"browser_ms": 120_000, "curl_s": 360},
 }
 
 
@@ -135,7 +136,7 @@ if __name__ == "__main__":
     parser.add_argument("--visit_id", required=True)
     parser.add_argument("--proxy",    default=None)
     parser.add_argument("--mode",     default="baseline",
-                        choices=["baseline", "tor", "nym", "vpn"])
+                        choices=["baseline", "tor", "vpn", "nym5", "nym2"])
     args = parser.parse_args()
 
     result = visit(args.url, args.visit_id, args.proxy, args.mode)

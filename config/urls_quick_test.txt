@@ -1,0 +1,8 @@
+# Quick test URL list — 6 URLs, one of each content type
+# Used by: baseline, vpn, tor, nym2
+page_html_1.html
+page_heavy_dashboard_1.html
+data_json_1.json
+doc_pdf_1.pdf
+audio_mp3_1.mp3
+video_mp4_1.mp4

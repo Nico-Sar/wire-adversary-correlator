@@ -38,7 +38,7 @@ REQUIRED_KEYS = {
     "X_egress_up",  "X_egress_down",
     "ingress_visit_ids", "egress_visit_ids",
     "ingress_urls",      "egress_urls",
-    "pairs", "url_index", "modes",
+    "pairs", "modes",
 }
  
 PASS_SYM = "  \u2713 "

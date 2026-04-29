@@ -26,6 +26,19 @@ def slice_windows(signal:     np.ndarray,
         return np.empty((0, window_len), dtype=np.float32)
 
     step = max(1, int(window_len * (1.0 - overlap)))
+
+    # Zero-pad the tail so (len - window_len) % step == 0.
+    # Matches ShYSh: padding happens at signal level before windowing so every
+    # window is full-width and no samples are discarded.  For our standard mode
+    # durations (300 / 600 / 1200 samples) the tail is already 0, so this is a
+    # no-op in normal operation; it guards against edge-case durations.
+    tail = (len(signal) - window_len) % step
+    if tail != 0:
+        pad = step - tail
+        signal = np.concatenate(
+            [signal, np.zeros(pad, dtype=np.float32)]
+        )
+
     starts = range(0, len(signal) - window_len + 1, step)
     windows = np.array(
         [signal[i : i + window_len] for i in starts],

@@ -10,8 +10,10 @@ All values are ShYSh baseline defaults unless noted.
 VISIT_TIMEOUTS = {
     "baseline": {"browser_ms": 30_000,  "curl_s": 60},
     "tor":      {"browser_ms": 120_000, "curl_s": 300},
-    "nym":      {"browser_ms": 180_000, "curl_s": 600},
     "vpn":      {"browser_ms": 60_000,  "curl_s": 120},
+    "nym5":     {"browser_ms": 180_000, "curl_s": 600},
+    # nym2 (2-hop) has fewer mix nodes than nym5 — tune after pilot
+    "nym2":     {"browser_ms": 120_000, "curl_s": 360},
 }
 
 # ── KDE / Preprocessing ───────────────────────────────────────────────────────
@@ -28,8 +30,13 @@ KDE = {
 KDE_PER_MODE = {
     "baseline": {"duration": 30.0,  "sigma": 0.125},
     "tor":      {"duration": 60.0,  "sigma": 0.25},
-    "nym":      {"duration": 120.0, "sigma": 0.5},
     "vpn":      {"duration": 30.0,  "sigma": 0.125},
+    "nym5":     {"duration": 60.0,  "sigma": 0.5},
+    # nym2 (2-hop WireGuard): confirmed on pilot (56/59 visits built, span p95=9.2s, max=9.8s).
+    # duration=30s: p95_span(9.2s)+10s buffer → 30s floor. n_windows=19 (same as baseline/vpn).
+    # sigma=0.2: WireGuard UDP is high-density (~16k pkts/6s); inter-packet gap (~0.001s) is
+    # meaningless for kernel width. 0.2s smooths the burst envelope without collapsing structure.
+    "nym2":     {"duration": 30.0,  "sigma": 0.2},
 }
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -50,6 +57,20 @@ MODEL = {
     "learning_rate":  1e-3,
     "weight_decay":   1e-4,
     "neg_pos_ratio":  10,   # Negative samples per positive (ShYSh: 10)
+    "min_visits_per_url": 2,  # Hard negatives require ≥2 visits per URL
+}
+
+# ── Collection behaviour ──────────────────────────────────────────────────────
+
+COLLECTION = {
+    # Rotate Tor circuit (NEWNYM) or Nym gateway before every visit.
+    # Pass --rotate-circuits to coordinator.py to activate at runtime.
+    # Recommended: True for all anonymity modes in the final collection run.
+    "rotate_circuits": True,
+
+    # Seconds to wait after NEWNYM before starting captures (Tor only).
+    # Built into rotate_circuit_tor(); listed here for documentation.
+    "tor_newnym_wait_s": 5,
 }
 
 # ── Evaluation ────────────────────────────────────────────────────────────────

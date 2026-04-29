@@ -1,0 +1,366 @@
+{
+  "data": [
+    {
+      "id": 847098,
+      "slug": "core-0278",
+      "title": "sigma edge mu omicron chi",
+      "score": 72.21,
+      "tags": [
+        "sigma",
+        "edge",
+        "mu"
+      ],
+      "active": true,
+      "ts": "2025-06-17T11:42:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 201
+      }
+    },
+    {
+      "id": 449615,
+      "slug": "pi-5586",
+      "title": "gamma base epsilon upsilon psi",
+      "score": 73.68,
+      "tags": [
+        "gamma",
+        "base",
+        "epsilon"
+      ],
+      "active": false,
+      "ts": "2025-07-14T04:19:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 226
+      }
+    },
+    {
+      "id": 893272,
+      "slug": "apex-7379",
+      "title": "omega lambda beta nu data",
+      "score": 24.23,
+      "tags": [
+        "omega",
+        "lambda",
+        "beta"
+      ],
+      "active": true,
+      "ts": "2025-12-15T09:20:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 331
+      }
+    },
+    {
+      "id": 280677,
+      "slug": "zeta-8543",
+      "title": "alpha hash tau kappa phi",
+      "score": 4.12,
+      "tags": [
+        "alpha",
+        "hash",
+        "tau"
+      ],
+      "active": false,
+      "ts": "2025-09-08T02:25:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 108
+      }
+    },
+    {
+      "id": 738758,
+      "slug": "eta-8147",
+      "title": "xi iota theta core sigma",
+      "score": 32.59,
+      "tags": [
+        "xi",
+        "iota",
+        "theta"
+      ],
+      "active": true,
+      "ts": "2025-06-01T07:14:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 229
+      }
+    },
+    {
+      "id": 414219,
+      "slug": "mu-6827",
+      "title": "omicron chi rho pi gamma",
+      "score": 58.6,
+      "tags": [
+        "omicron",
+        "chi",
+        "rho"
+      ],
+      "active": false,
+      "ts": "2025-03-10T16:11:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 174
+      }
+    },
+    {
+      "id": 966532,
+      "slug": "epsilon-3622",
+      "title": "upsilon psi flux apex omega",
+      "score": 73.9,
+      "tags": [
+        "upsilon",
+        "psi",
+        "flux"
+      ],
+      "active": true,
+      "ts": "2025-08-11T21:20:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 167
+      }
+    },
+    {
+      "id": 4225,
+      "slug": "beta-6790",
+      "title": "nu data grid zeta alpha",
+      "score": 24.63,
+      "tags": [
+        "nu",
+        "data",
+        "grid"
+      ],
+      "active": false,
+      "ts": "2025-05-28T14:25:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 484
+      }
+    },
+    {
+      "id": 810898,
+      "slug": "tau-5791",
+      "title": "kappa phi delta eta xi",
+      "score": 36.76,
+      "tags": [
+        "kappa",
+        "phi",
+        "delta"
+      ],
+      "active": true,
+      "ts": "2025-02-25T03:22:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 13
+      }
+    },
+    {
+      "id": 550279,
+      "slug": "theta-0408",
+      "title": "core sigma edge mu omicron",
+      "score": 3.49,
+      "tags": [
+        "core",
+        "sigma",
+        "edge"
+      ],
+      "active": false,
+      "ts": "2025-07-02T12:31:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 206
+      }
+    },
+    {
+      "id": 669872,
+      "slug": "rho-6475",
+      "title": "pi gamma base epsilon upsilon",
+      "score": 7.17,
+      "tags": [
+        "pi",
+        "gamma",
+        "base"
+      ],
+      "active": true,
+      "ts": "2025-08-07T17:52:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 331
+      }
+    },
+    {
+      "id": 49245,
+      "slug": "flux-2069",
+      "title": "apex omega lambda beta nu",
+      "score": 52.39,
+      "tags": [
+        "apex",
+        "omega",
+        "lambda"
+      ],
+      "active": false,
+      "ts": "2025-09-16T18:49:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 340
+      }
+    },
+    {
+      "id": 54046,
+      "slug": "grid-2147",
+      "title": "zeta alpha hash tau kappa",
+      "score": 20.67,
+      "tags": [
+        "zeta",
+        "alpha",
+        "hash"
+      ],
+      "active": true,
+      "ts": "2025-06-01T07:14:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 93
+      }
+    },
+    {
+      "id": 900675,
+      "slug": "delta-9661",
+      "title": "eta xi iota theta core",
+      "score": 47.63,
+      "tags": [
+        "eta",
+        "xi",
+        "iota"
+      ],
+      "active": false,
+      "ts": "2025-11-02T16:23:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 110
+      }
+    },
+    {
+      "id": 362972,
+      "slug": "edge-8372",
+      "title": "mu omicron chi rho pi",
+      "score": 48.91,
+      "tags": [
+        "mu",
+        "omicron",
+        "chi"
+      ],
+      "active": true,
+      "ts": "2025-12-19T05:08:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 283
+      }
+    },
+    {
+      "id": 965945,
+      "slug": "base-0749",
+      "title": "epsilon upsilon psi flux apex",
+      "score": 61.83,
+      "tags": [
+        "epsilon",
+        "upsilon",
+        "psi"
+      ],
+      "active": false,
+      "ts": "2025-09-16T14:33:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 12
+      }
+    },
+    {
+      "id": 298986,
+      "slug": "lambda-4125",
+      "title": "beta nu data grid zeta",
+      "score": 91.07,
+      "tags": [
+        "beta",
+        "nu",
+        "data"
+      ],
+      "active": true,
+      "ts": "2025-10-01T19:42:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 93
+      }
+    },
+    {
+      "id": 418879,
+      "slug": "hash-7571",
+      "title": "tau kappa phi delta eta",
+      "score": 19.98,
+      "tags": [
+        "tau",
+        "kappa",
+        "phi"
+      ],
+      "active": false,
+      "ts": "2025-03-22T12:51:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 302
+      }
+    },
+    {
+      "id": 403400,
+      "slug": "iota-2414",
+      "title": "theta core sigma edge mu",
+      "score": 95.32,
+      "tags": [
+        "theta",
+        "core",
+        "sigma"
+      ],
+      "active": true,
+      "ts": "2025-12-03T17:44:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 451
+      }
+    },
+    {
+      "id": 227861,
+      "slug": "chi-2255",
+      "title": "rho pi gamma base epsilon",
+      "score": 57.11,
+      "tags": [
+        "rho",
+        "pi",
+        "gamma"
+      ],
+      "active": false,
+      "ts": "2025-09-12T18:33:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 324
+      }
+    },
+    {
+      "id": 317174,
+      "slug": "psi-1809",
+      "title": "flux apex omega lambda beta",
+      "score": 48.75,
+      "tags": [
+        "flux",
+        "apex",
+        "omega"
+      ],
+      "active": true,
+      "ts": "2025-10-09T07:10:00Z",
+      "meta": {
+        "src": "config",
+        "rank": 61
+      }
+    }
+  ],
+  "meta": {
+    "count": 21,
+    "version": "1.0",
+    "source": "config"
+  }
+}

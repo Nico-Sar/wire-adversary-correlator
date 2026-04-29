@@ -5,7 +5,8 @@ Gaussian KDE transform: packet timestamps → continuous density wave.
 Follows the ShYSh shape computation exactly:
   - Convolves a sum of Dirac deltas (one per packet) with a Gaussian kernel
   - Evaluated on a regular time grid with sampling period T
-  - Normalized so that sum(shape) == number of packets in the flow
+  - Normalized so that sum(shape) == n_grid_samples (ShYSh convention,
+    scale-invariant across modes with different durations)
 Reference: ShYSh paper, Section III-A "Flow Shape Signal Computation"
   sigma = 0.125s, T = 0.1s (defaults — tune for TCP layer)
 """
@@ -52,7 +53,9 @@ def kde_shape(timestamps: list[float],
     """
     Computes the KDE shape signal from a list of packet timestamps.
     Returns a 1D float32 array of length ceil(duration / t_sample).
-    Normalized so that sum(output) == len(timestamps).
+    Normalized so that sum(output) == n_samples (grid length), following ShYSh.
+    This makes the scale invariant to flow duration and comparable across modes
+    with different durations (30 s → 300 samples, 60 s → 600 samples).
 
     Args:
         timestamps: list of relative packet arrival times in seconds
@@ -84,10 +87,13 @@ def kde_shape(timestamps: list[float],
     kernel = np.exp(-0.5 * (diff / sigma) ** 2)        # (n_total, n_packets)
     shape  = kernel.sum(axis=1)                         # (n_total,)
 
-    # Normalize: sum(shape) == len(timestamps)
-    # The raw sum of the unnormalized Gaussian is sigma * sqrt(2π) per packet.
-    norm_factor = sigma * np.sqrt(2.0 * np.pi) / t_sample
-    shape /= norm_factor
-
     # Crop: slice [n_pad : n_pad + n_samples] corresponds exactly to t ∈ [0, duration)
-    return shape[n_pad : n_pad + n_samples].astype(np.float32)
+    shape = shape[n_pad : n_pad + n_samples]
+
+    # Normalize: sum(shape) == n_samples (ShYSh convention).
+    # Makes the output scale-invariant to packet count and grid length.
+    raw_sum = shape.sum()
+    if raw_sum > 0:
+        shape = shape * (n_samples / raw_sum)
+
+    return shape.astype(np.float32)

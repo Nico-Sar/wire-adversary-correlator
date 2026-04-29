@@ -1,0 +1,5 @@
+# Pilot collection for Nym5 mode — lightweight URLs only.
+# Binary files (pdf, mp3, mp4) excluded due to slow transfer over 5-hop mixnet.
+page_html_1.html
+data_json_1.json
+page_heavy_dashboard_1.html

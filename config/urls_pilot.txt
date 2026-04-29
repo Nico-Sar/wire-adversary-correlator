@@ -4,7 +4,9 @@
 # 5 URLs × 5 visits × 3 modes = 75 total visits, ~30 min wall time.
 # Split (70/15/15 by URL): train=3, val=1, test=1 URLs.
 page_html_1.html
+page_heavy_dashboard_1.html
 data_json_1.json
 doc_pdf_1.pdf
 audio_mp3_1.mp3
 video_mp4_1.mp4
+

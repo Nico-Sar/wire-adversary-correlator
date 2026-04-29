@@ -1,0 +1,123 @@
+# nym2 (2-hop WireGuard) URL list — extended pilot
+# 100 URLs: full urls.txt minus the 15 page_heavy_* pages
+#
+# Excluded vs full urls.txt:
+#   - page_heavy_*  (15 URLs): multi-resource pages saturate the ~34s visit window
+#
+# All other types are kept (JSON, PDF, ZIP, MP3, MP4) because nym2 encapsulates
+# them in WireGuard UDP and the content type only affects the byte count, not
+# capture feasibility. Visit window is 34s (30s duration + 4s margin).
+#
+# URL split (70/15/15 by URL): train≈70, val≈15, test≈15
+
+# ── HTML pages (30) ──────────────────────────────────────────────────────────
+page_html_1.html
+page_html_2.html
+page_html_3.html
+page_html_4.html
+page_html_5.html
+page_html_6.html
+page_html_7.html
+page_html_8.html
+page_html_9.html
+page_html_10.html
+page_news_1.html
+page_news_2.html
+page_news_3.html
+page_news_4.html
+page_news_5.html
+page_shop_1.html
+page_shop_2.html
+page_shop_3.html
+page_shop_4.html
+page_shop_5.html
+page_social_1.html
+page_social_2.html
+page_social_3.html
+page_social_4.html
+page_social_5.html
+page_forum_1.html
+page_forum_2.html
+page_forum_3.html
+page_forum_4.html
+page_forum_5.html
+
+# ── JSON (30) ─────────────────────────────────────────────────────────────────
+data_json_1.json
+data_json_2.json
+data_json_3.json
+data_json_4.json
+data_json_5.json
+data_json_6.json
+data_json_7.json
+data_json_8.json
+data_json_9.json
+data_json_10.json
+crypto_tx_1.json
+crypto_tx_2.json
+crypto_tx_3.json
+crypto_tx_4.json
+crypto_tx_5.json
+crypto_tx_6.json
+crypto_tx_7.json
+crypto_tx_8.json
+crypto_tx_9.json
+crypto_tx_10.json
+crypto_block_1.json
+crypto_block_2.json
+crypto_block_3.json
+crypto_block_4.json
+crypto_block_5.json
+crypto_wallet_1.json
+crypto_wallet_2.json
+crypto_wallet_3.json
+crypto_wallet_4.json
+crypto_wallet_5.json
+
+# ── PDF documents (10) ────────────────────────────────────────────────────────
+doc_pdf_1.pdf
+doc_pdf_2.pdf
+doc_pdf_3.pdf
+doc_pdf_4.pdf
+doc_pdf_5.pdf
+doc_pdf_6.pdf
+doc_pdf_7.pdf
+doc_pdf_8.pdf
+doc_pdf_9.pdf
+doc_pdf_10.pdf
+
+# ── ZIP archives (10) ─────────────────────────────────────────────────────────
+archive_zip_1.zip
+archive_zip_2.zip
+archive_zip_3.zip
+archive_zip_4.zip
+archive_zip_5.zip
+archive_zip_6.zip
+archive_zip_7.zip
+archive_zip_8.zip
+archive_zip_9.zip
+archive_zip_10.zip
+
+# ── MP3 audio (10) ────────────────────────────────────────────────────────────
+audio_mp3_1.mp3
+audio_mp3_2.mp3
+audio_mp3_3.mp3
+audio_mp3_4.mp3
+audio_mp3_5.mp3
+audio_mp3_6.mp3
+audio_mp3_7.mp3
+audio_mp3_8.mp3
+audio_mp3_9.mp3
+audio_mp3_10.mp3
+
+# ── MP4 video (10) ────────────────────────────────────────────────────────────
+video_mp4_1.mp4
+video_mp4_2.mp4
+video_mp4_3.mp4
+video_mp4_4.mp4
+video_mp4_5.mp4
+video_mp4_6.mp4
+video_mp4_7.mp4
+video_mp4_8.mp4
+video_mp4_9.mp4
+video_mp4_10.mp4

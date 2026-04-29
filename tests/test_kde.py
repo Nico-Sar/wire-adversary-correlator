@@ -89,10 +89,12 @@ class TestKdeShape:
         assert len(shape) == expected_len
 
     def test_normalization(self):
-        """sum(shape) should equal the number of packets."""
+        """sum(shape) should equal n_grid_samples (ShYSh convention)."""
         ts = [0.5, 1.0, 1.5, 2.0, 2.5]
-        shape = kde_shape(ts, duration=6.0, sigma=0.125, t_sample=0.1)
-        assert np.sum(shape) == pytest.approx(len(ts), rel=1e-3)
+        duration, t_sample = 6.0, 0.1
+        shape = kde_shape(ts, duration=duration, sigma=0.125, t_sample=t_sample)
+        n_samples = int(np.ceil(duration / t_sample))
+        assert np.sum(shape) == pytest.approx(n_samples, rel=1e-3)
 
     def test_empty_timestamps_returns_zeros(self):
         shape = kde_shape([], duration=6.0, sigma=0.125, t_sample=0.1)

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Music Discovery — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/dark-mode.css">
+  <link rel="stylesheet" href="/assets/css/grid.css">
+  <script src="/assets/js/api-client.js" defer></script>
+  <script src="/assets/js/events.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#music</h1>
+    <p>Five albums that rewired my brain this month</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">4h ago</span>
+        </div>
+        <p class="post-text">Exploring album today — absolutely worth the effort. The details here are incredible. #album #music</p>
+        <div class="post-actions">
+          <button>♥ 2091</button>
+          <button>💬 184</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">9h ago</span>
+        </div>
+        <p class="post-text">Exploring playlist today — absolutely worth the effort. The details here are incredible. #playlist #music</p>
+        <div class="post-actions">
+          <button>♥ 894</button>
+          <button>💬 166</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">12h ago</span>
+        </div>
+        <p class="post-text">Exploring indie today — absolutely worth the effort. The details here are incredible. #indie #music</p>
+        <div class="post-actions">
+          <button>♥ 1196</button>
+          <button>💬 154</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">14h ago</span>
+        </div>
+        <p class="post-text">Exploring artist today — absolutely worth the effort. The details here are incredible. #artist #music</p>
+        <div class="post-actions">
+          <button>♥ 4710</button>
+          <button>💬 305</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">2h ago</span>
+        </div>
+        <p class="post-text">Exploring listen today — absolutely worth the effort. The details here are incredible. #listen #music</p>
+        <div class="post-actions">
+          <button>♥ 3387</button>
+          <button>💬 225</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">17h ago</span>
+        </div>
+        <p class="post-text">Exploring album today — absolutely worth the effort. The details here are incredible. #album #music</p>
+        <div class="post-actions">
+          <button>♥ 668</button>
+          <button>💬 338</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">12h ago</span>
+        </div>
+        <p class="post-text">Exploring playlist today — absolutely worth the effort. The details here are incredible. #playlist #music</p>
+        <div class="post-actions">
+          <button>♥ 3653</button>
+          <button>💬 241</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">18h ago</span>
+        </div>
+        <p class="post-text">Exploring indie today — absolutely worth the effort. The details here are incredible. #indie #music</p>
+        <div class="post-actions">
+          <button>♥ 3745</button>
+          <button>💬 238</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_9 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/sidebar.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('sidebar-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/stats.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('stats-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

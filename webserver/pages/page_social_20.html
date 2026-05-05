@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Architecture & Design — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/grid.css">
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <script src="/assets/js/carousel.js" defer></script>
+  <script src="/assets/js/search.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#design</h1>
+    <p>Brutalist buildings you need to see before they disappear</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">18h ago</span>
+        </div>
+        <p class="post-text">Exploring brutalism today — absolutely worth the effort. The details here are incredible. #brutalism #design</p>
+        <div class="post-actions">
+          <button>♥ 1811</button>
+          <button>💬 183</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">13h ago</span>
+        </div>
+        <p class="post-text">Exploring concrete today — absolutely worth the effort. The details here are incredible. #concrete #design</p>
+        <div class="post-actions">
+          <button>♥ 1753</button>
+          <button>💬 197</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">17h ago</span>
+        </div>
+        <p class="post-text">Exploring architecture today — absolutely worth the effort. The details here are incredible. #architecture #design</p>
+        <div class="post-actions">
+          <button>♥ 1559</button>
+          <button>💬 175</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">22h ago</span>
+        </div>
+        <p class="post-text">Exploring heritage today — absolutely worth the effort. The details here are incredible. #heritage #design</p>
+        <div class="post-actions">
+          <button>♥ 1270</button>
+          <button>💬 220</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">4h ago</span>
+        </div>
+        <p class="post-text">Exploring urban today — absolutely worth the effort. The details here are incredible. #urban #design</p>
+        <div class="post-actions">
+          <button>♥ 3465</button>
+          <button>💬 196</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">3h ago</span>
+        </div>
+        <p class="post-text">Exploring brutalism today — absolutely worth the effort. The details here are incredible. #brutalism #design</p>
+        <div class="post-actions">
+          <button>♥ 384</button>
+          <button>💬 284</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">18h ago</span>
+        </div>
+        <p class="post-text">Exploring concrete today — absolutely worth the effort. The details here are incredible. #concrete #design</p>
+        <div class="post-actions">
+          <button>♥ 1938</button>
+          <button>💬 293</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">21h ago</span>
+        </div>
+        <p class="post-text">Exploring architecture today — absolutely worth the effort. The details here are incredible. #architecture #design</p>
+        <div class="post-actions">
+          <button>♥ 1972</button>
+          <button>💬 95</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_20 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/trending.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('trending-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/users.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('users-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

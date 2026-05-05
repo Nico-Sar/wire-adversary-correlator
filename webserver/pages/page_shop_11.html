@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Pet Accessories — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/reset.css">
+  <link rel="stylesheet" href="/assets/css/animations.css">
+  <script src="/assets/js/events.js" defer></script>
+  <script src="/assets/js/api-client.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Pets</a> › Pet Accessories</nav>
+    <div class="shop-banner">Collars, beds, and nutrition for cats and dogs</div>
+  </header>
+  <main>
+    <h1>Pet Accessories</h1>
+    <p class="category-desc">Browse our curated selection of pet accessories. Collars, beds, and nutrition for cats and dogs</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="harness product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Harness — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality harness for pets enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$884.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="orthopedic bed product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Orthopedic Bed — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality orthopedic bed for pets enthusiasts. Rated 4.7/5 by verified buyers.</p>
+          <p class="product-price">$347.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="grain-free product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Grain-Free — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality grain-free for pets enthusiasts. Rated 4.8/5 by verified buyers.</p>
+          <p class="product-price">$620.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="microchip product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Microchip — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality microchip for pets enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$624.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="enzymatic cleaner product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Enzymatic Cleaner — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality enzymatic cleaner for pets enthusiasts. Rated 3.9/5 by verified buyers.</p>
+          <p class="product-price">$676.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="harness product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Harness — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality harness for pets enthusiasts. Rated 4.7/5 by verified buyers.</p>
+          <p class="product-price">$445.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="orthopedic bed product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Orthopedic Bed — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality orthopedic bed for pets enthusiasts. Rated 4.1/5 by verified buyers.</p>
+          <p class="product-price">$682.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-3.svg" alt="grain-free product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Grain-Free — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality grain-free for pets enthusiasts. Rated 4.5/5 by verified buyers.</p>
+          <p class="product-price">$315.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-4.svg" alt="microchip product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Microchip — Pet Accessories Edition</h3>
+          <p class="product-desc">High-quality microchip for pets enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$610.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_11 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/comments.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('comments-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/users.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('users-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

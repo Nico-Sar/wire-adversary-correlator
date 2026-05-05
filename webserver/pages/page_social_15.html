@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Tech Commentary — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/dark-mode.css">
+  <link rel="stylesheet" href="/assets/css/animations.css">
+  <script src="/assets/js/search.js" defer></script>
+  <script src="/assets/js/analytics.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#tech</h1>
+    <p>Hot take: the smartphone plateau is actually good</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">11h ago</span>
+        </div>
+        <p class="post-text">Exploring smartphone today — absolutely worth the effort. The details here are incredible. #smartphone #tech</p>
+        <div class="post-actions">
+          <button>♥ 931</button>
+          <button>💬 255</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">20h ago</span>
+        </div>
+        <p class="post-text">Exploring innovation today — absolutely worth the effort. The details here are incredible. #innovation #tech</p>
+        <div class="post-actions">
+          <button>♥ 4526</button>
+          <button>💬 24</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">15h ago</span>
+        </div>
+        <p class="post-text">Exploring market today — absolutely worth the effort. The details here are incredible. #market #tech</p>
+        <div class="post-actions">
+          <button>♥ 411</button>
+          <button>💬 76</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">23h ago</span>
+        </div>
+        <p class="post-text">Exploring opinion today — absolutely worth the effort. The details here are incredible. #opinion #tech</p>
+        <div class="post-actions">
+          <button>♥ 1684</button>
+          <button>💬 221</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">8h ago</span>
+        </div>
+        <p class="post-text">Exploring upgrade cycle today — absolutely worth the effort. The details here are incredible. #upgrade_cycle #tech</p>
+        <div class="post-actions">
+          <button>♥ 1108</button>
+          <button>💬 108</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">7h ago</span>
+        </div>
+        <p class="post-text">Exploring smartphone today — absolutely worth the effort. The details here are incredible. #smartphone #tech</p>
+        <div class="post-actions">
+          <button>♥ 4732</button>
+          <button>💬 131</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">8h ago</span>
+        </div>
+        <p class="post-text">Exploring innovation today — absolutely worth the effort. The details here are incredible. #innovation #tech</p>
+        <div class="post-actions">
+          <button>♥ 972</button>
+          <button>💬 90</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">11h ago</span>
+        </div>
+        <p class="post-text">Exploring market today — absolutely worth the effort. The details here are incredible. #market #tech</p>
+        <div class="post-actions">
+          <button>♥ 141</button>
+          <button>💬 244</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_15 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/trending.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('trending-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/sidebar.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('sidebar-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Home Electronics — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/animations.css">
+  <link rel="stylesheet" href="/assets/css/forms.css">
+  <script src="/assets/js/events.js" defer></script>
+  <script src="/assets/js/app.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Electronics & TV</a> › Home Electronics</nav>
+    <div class="shop-banner">Smart TVs, soundbars, and streaming devices</div>
+  </header>
+  <main>
+    <h1>Home Electronics</h1>
+    <p class="category-desc">Browse our curated selection of home electronics. Smart TVs, soundbars, and streaming devices</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="4K display product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium 4K Display — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality 4K display for electronics & tv enthusiasts. Rated 4.1/5 by verified buyers.</p>
+          <p class="product-price">$889.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="OLED product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Oled — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality OLED for electronics & tv enthusiasts. Rated 4.2/5 by verified buyers.</p>
+          <p class="product-price">$364.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="soundbar product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Soundbar — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality soundbar for electronics & tv enthusiasts. Rated 4.5/5 by verified buyers.</p>
+          <p class="product-price">$471.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="streaming product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Streaming — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality streaming for electronics & tv enthusiasts. Rated 4.8/5 by verified buyers.</p>
+          <p class="product-price">$637.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="smart home product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Smart Home — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality smart home for electronics & tv enthusiasts. Rated 5.0/5 by verified buyers.</p>
+          <p class="product-price">$447.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="4K display product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium 4K Display — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality 4K display for electronics & tv enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$685.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="OLED product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Oled — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality OLED for electronics & tv enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$636.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-3.svg" alt="soundbar product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Soundbar — Home Electronics Edition</h3>
+          <p class="product-desc">High-quality soundbar for electronics & tv enthusiasts. Rated 3.7/5 by verified buyers.</p>
+          <p class="product-price">$607.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_6 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/trending.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('trending-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/users.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('users-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

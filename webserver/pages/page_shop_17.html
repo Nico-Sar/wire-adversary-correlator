@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Garden & Outdoors — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/dark-mode.css">
+  <link rel="stylesheet" href="/assets/css/forms.css">
+  <script src="/assets/js/app.js" defer></script>
+  <script src="/assets/js/events.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Garden</a> › Garden & Outdoors</nav>
+    <div class="shop-banner">Lawnmowers, planters, and irrigation</div>
+  </header>
+  <main>
+    <h1>Garden & Outdoors</h1>
+    <p class="category-desc">Browse our curated selection of garden & outdoors. Lawnmowers, planters, and irrigation</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="cordless product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cordless — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality cordless for garden enthusiasts. Rated 3.9/5 by verified buyers.</p>
+          <p class="product-price">$808.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="irrigation product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Irrigation — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality irrigation for garden enthusiasts. Rated 4.0/5 by verified buyers.</p>
+          <p class="product-price">$284.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="raised bed product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Raised Bed — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality raised bed for garden enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$676.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="composting product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Composting — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality composting for garden enthusiasts. Rated 4.9/5 by verified buyers.</p>
+          <p class="product-price">$346.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="solar lighting product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Solar Lighting — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality solar lighting for garden enthusiasts. Rated 4.7/5 by verified buyers.</p>
+          <p class="product-price">$822.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="cordless product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cordless — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality cordless for garden enthusiasts. Rated 4.9/5 by verified buyers.</p>
+          <p class="product-price">$101.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="irrigation product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Irrigation — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality irrigation for garden enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$351.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-3.svg" alt="raised bed product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Raised Bed — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality raised bed for garden enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$465.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-4.svg" alt="composting product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Composting — Garden & Outdoors Edition</h3>
+          <p class="product-desc">High-quality composting for garden enthusiasts. Rated 3.8/5 by verified buyers.</p>
+          <p class="product-price">$127.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_17 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/stats.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('stats-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/users.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('users-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Startup Founders — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <link rel="stylesheet" href="/assets/css/grid.css">
+  <script src="/assets/js/search.js" defer></script>
+  <script src="/assets/js/auth.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#startup</h1>
+    <p>What I wish I knew before raising a seed round</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">17h ago</span>
+        </div>
+        <p class="post-text">Exploring fundraising today — absolutely worth the effort. The details here are incredible. #fundraising #startup</p>
+        <div class="post-actions">
+          <button>♥ 2969</button>
+          <button>💬 229</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">3h ago</span>
+        </div>
+        <p class="post-text">Exploring pitch deck today — absolutely worth the effort. The details here are incredible. #pitch_deck #startup</p>
+        <div class="post-actions">
+          <button>♥ 3263</button>
+          <button>💬 258</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">13h ago</span>
+        </div>
+        <p class="post-text">Exploring investors today — absolutely worth the effort. The details here are incredible. #investors #startup</p>
+        <div class="post-actions">
+          <button>♥ 1945</button>
+          <button>💬 280</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">23h ago</span>
+        </div>
+        <p class="post-text">Exploring term sheet today — absolutely worth the effort. The details here are incredible. #term_sheet #startup</p>
+        <div class="post-actions">
+          <button>♥ 532</button>
+          <button>💬 265</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">5h ago</span>
+        </div>
+        <p class="post-text">Exploring founder today — absolutely worth the effort. The details here are incredible. #founder #startup</p>
+        <div class="post-actions">
+          <button>♥ 4296</button>
+          <button>💬 60</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">1h ago</span>
+        </div>
+        <p class="post-text">Exploring fundraising today — absolutely worth the effort. The details here are incredible. #fundraising #startup</p>
+        <div class="post-actions">
+          <button>♥ 958</button>
+          <button>💬 134</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">11h ago</span>
+        </div>
+        <p class="post-text">Exploring pitch deck today — absolutely worth the effort. The details here are incredible. #pitch_deck #startup</p>
+        <div class="post-actions">
+          <button>♥ 4445</button>
+          <button>💬 340</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">22h ago</span>
+        </div>
+        <p class="post-text">Exploring investors today — absolutely worth the effort. The details here are incredible. #investors #startup</p>
+        <div class="post-actions">
+          <button>♥ 738</button>
+          <button>💬 62</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_13 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/config.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('config-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/products.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('products-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

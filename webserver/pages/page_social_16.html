@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Political Discussion — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/typography.css">
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <script src="/assets/js/app.js" defer></script>
+  <script src="/assets/js/search.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#politics</h1>
+    <p>Thread: why ranked-choice voting changes strategy</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">18h ago</span>
+        </div>
+        <p class="post-text">Exploring voting today — absolutely worth the effort. The details here are incredible. #voting #politics</p>
+        <div class="post-actions">
+          <button>♥ 4431</button>
+          <button>💬 181</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">18h ago</span>
+        </div>
+        <p class="post-text">Exploring ranked choice today — absolutely worth the effort. The details here are incredible. #ranked_choice #politics</p>
+        <div class="post-actions">
+          <button>♥ 646</button>
+          <button>💬 281</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">3h ago</span>
+        </div>
+        <p class="post-text">Exploring strategy today — absolutely worth the effort. The details here are incredible. #strategy #politics</p>
+        <div class="post-actions">
+          <button>♥ 3031</button>
+          <button>💬 303</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">17h ago</span>
+        </div>
+        <p class="post-text">Exploring policy today — absolutely worth the effort. The details here are incredible. #policy #politics</p>
+        <div class="post-actions">
+          <button>♥ 1396</button>
+          <button>💬 318</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">9h ago</span>
+        </div>
+        <p class="post-text">Exploring democracy today — absolutely worth the effort. The details here are incredible. #democracy #politics</p>
+        <div class="post-actions">
+          <button>♥ 4320</button>
+          <button>💬 93</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">10h ago</span>
+        </div>
+        <p class="post-text">Exploring voting today — absolutely worth the effort. The details here are incredible. #voting #politics</p>
+        <div class="post-actions">
+          <button>♥ 2753</button>
+          <button>💬 57</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">13h ago</span>
+        </div>
+        <p class="post-text">Exploring ranked choice today — absolutely worth the effort. The details here are incredible. #ranked_choice #politics</p>
+        <div class="post-actions">
+          <button>♥ 4640</button>
+          <button>💬 188</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">10h ago</span>
+        </div>
+        <p class="post-text">Exploring strategy today — absolutely worth the effort. The details here are incredible. #strategy #politics</p>
+        <div class="post-actions">
+          <button>♥ 3631</button>
+          <button>💬 128</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_16 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/stats.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('stats-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/users.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('users-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Office Supplies — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/typography.css">
+  <link rel="stylesheet" href="/assets/css/forms.css">
+  <script src="/assets/js/app.js" defer></script>
+  <script src="/assets/js/carousel.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Office & Stationery</a> › Office Supplies</nav>
+    <div class="shop-banner">Ergonomic furniture, stationery, and printing</div>
+  </header>
+  <main>
+    <h1>Office Supplies</h1>
+    <p class="category-desc">Browse our curated selection of office supplies. Ergonomic furniture, stationery, and printing</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="ergonomic product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Ergonomic — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality ergonomic for office & stationery enthusiasts. Rated 4.8/5 by verified buyers.</p>
+          <p class="product-price">$409.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="standing desk product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Standing Desk — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality standing desk for office & stationery enthusiasts. Rated 4.2/5 by verified buyers.</p>
+          <p class="product-price">$634.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="printer product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Printer — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality printer for office & stationery enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$845.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="monitor arm product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Monitor Arm — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality monitor arm for office & stationery enthusiasts. Rated 4.9/5 by verified buyers.</p>
+          <p class="product-price">$625.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="cable management product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cable Management — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality cable management for office & stationery enthusiasts. Rated 4.7/5 by verified buyers.</p>
+          <p class="product-price">$391.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="ergonomic product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Ergonomic — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality ergonomic for office & stationery enthusiasts. Rated 4.5/5 by verified buyers.</p>
+          <p class="product-price">$281.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="standing desk product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Standing Desk — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality standing desk for office & stationery enthusiasts. Rated 3.7/5 by verified buyers.</p>
+          <p class="product-price">$672.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-3.svg" alt="printer product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Printer — Office Supplies Edition</h3>
+          <p class="product-desc">High-quality printer for office & stationery enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$709.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_10 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/users.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('users-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/config.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('config-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

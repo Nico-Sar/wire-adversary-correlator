@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Automotive Parts — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/animations.css">
+  <link rel="stylesheet" href="/assets/css/typography.css">
+  <script src="/assets/js/api-client.js" defer></script>
+  <script src="/assets/js/carousel.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Automotive</a> › Automotive Parts</nav>
+    <div class="shop-banner">Tyres, batteries, and performance accessories</div>
+  </header>
+  <main>
+    <h1>Automotive Parts</h1>
+    <p class="category-desc">Browse our curated selection of automotive parts. Tyres, batteries, and performance accessories</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="tyre rating product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Tyre Rating — Automotive Parts Edition</h3>
+          <p class="product-desc">High-quality tyre rating for automotive enthusiasts. Rated 4.2/5 by verified buyers.</p>
+          <p class="product-price">$748.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="battery capacity product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Battery Capacity — Automotive Parts Edition</h3>
+          <p class="product-desc">High-quality battery capacity for automotive enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$268.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="OEM fit product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Oem Fit — Automotive Parts Edition</h3>
+          <p class="product-desc">High-quality OEM fit for automotive enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$89.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="torque spec product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Torque Spec — Automotive Parts Edition</h3>
+          <p class="product-desc">High-quality torque spec for automotive enthusiasts. Rated 4.9/5 by verified buyers.</p>
+          <p class="product-price">$235.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="fitment guide product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Fitment Guide — Automotive Parts Edition</h3>
+          <p class="product-desc">High-quality fitment guide for automotive enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$809.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="tyre rating product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Tyre Rating — Automotive Parts Edition</h3>
+          <p class="product-desc">High-quality tyre rating for automotive enthusiasts. Rated 4.7/5 by verified buyers.</p>
+          <p class="product-price">$53.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_16 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/stats.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('stats-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/trending.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('trending-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

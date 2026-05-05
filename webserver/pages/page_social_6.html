@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Travel Photography — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/typography.css">
+  <link rel="stylesheet" href="/assets/css/forms.css">
+  <script src="/assets/js/events.js" defer></script>
+  <script src="/assets/js/search.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#travel</h1>
+    <p>Sunrise over Cappadocia hot-air balloons</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">19h ago</span>
+        </div>
+        <p class="post-text">Exploring travel today — absolutely worth the effort. The details here are incredible. #travel #travel</p>
+        <div class="post-actions">
+          <button>♥ 2844</button>
+          <button>💬 283</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">11h ago</span>
+        </div>
+        <p class="post-text">Exploring landscape today — absolutely worth the effort. The details here are incredible. #landscape #travel</p>
+        <div class="post-actions">
+          <button>♥ 1907</button>
+          <button>💬 6</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">12h ago</span>
+        </div>
+        <p class="post-text">Exploring photography today — absolutely worth the effort. The details here are incredible. #photography #travel</p>
+        <div class="post-actions">
+          <button>♥ 887</button>
+          <button>💬 261</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">13h ago</span>
+        </div>
+        <p class="post-text">Exploring sunrise today — absolutely worth the effort. The details here are incredible. #sunrise #travel</p>
+        <div class="post-actions">
+          <button>♥ 4060</button>
+          <button>💬 52</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">2h ago</span>
+        </div>
+        <p class="post-text">Exploring explore today — absolutely worth the effort. The details here are incredible. #explore #travel</p>
+        <div class="post-actions">
+          <button>♥ 3071</button>
+          <button>💬 109</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">7h ago</span>
+        </div>
+        <p class="post-text">Exploring travel today — absolutely worth the effort. The details here are incredible. #travel #travel</p>
+        <div class="post-actions">
+          <button>♥ 2937</button>
+          <button>💬 49</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">7h ago</span>
+        </div>
+        <p class="post-text">Exploring landscape today — absolutely worth the effort. The details here are incredible. #landscape #travel</p>
+        <div class="post-actions">
+          <button>♥ 3906</button>
+          <button>💬 61</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">3h ago</span>
+        </div>
+        <p class="post-text">Exploring photography today — absolutely worth the effort. The details here are incredible. #photography #travel</p>
+        <div class="post-actions">
+          <button>♥ 3748</button>
+          <button>💬 298</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_6 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/feed.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('feed-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/stats.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('stats-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

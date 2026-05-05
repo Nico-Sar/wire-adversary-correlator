@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Gaming Highlights — Social Feed</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <link rel="stylesheet" href="/assets/css/reset.css">
+  <script src="/assets/js/auth.js" defer></script>
+  <script src="/assets/js/api-client.js" defer></script>
+</head>
+<body>
+  <header class="social-header">
+    <h1>#gaming</h1>
+    <p>Finally hit Grandmaster in Season 14</p>
+  </header>
+  <main class="feed-layout">
+    <div class="post-feed">
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-01.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@traveller88</span>
+          <span class="post-time">12h ago</span>
+        </div>
+        <p class="post-text">Exploring rank today — absolutely worth the effort. The details here are incredible. #rank #gaming</p>
+        <div class="post-actions">
+          <button>♥ 591</button>
+          <button>💬 281</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-02.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@healthjunkie</span>
+          <span class="post-time">5h ago</span>
+        </div>
+        <p class="post-text">Exploring esports today — absolutely worth the effort. The details here are incredible. #esports #gaming</p>
+        <div class="post-actions">
+          <button>♥ 3331</button>
+          <button>💬 226</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-03.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@urbanexplorer</span>
+          <span class="post-time">11h ago</span>
+        </div>
+        <p class="post-text">Exploring highlight today — absolutely worth the effort. The details here are incredible. #highlight #gaming</p>
+        <div class="post-actions">
+          <button>♥ 4694</button>
+          <button>💬 329</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-04.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@techwriter</span>
+          <span class="post-time">14h ago</span>
+        </div>
+        <p class="post-text">Exploring team today — absolutely worth the effort. The details here are incredible. #team #gaming</p>
+        <div class="post-actions">
+          <button>♥ 1901</button>
+          <button>💬 177</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/avatar-05.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@photogeek</span>
+          <span class="post-time">11h ago</span>
+        </div>
+        <p class="post-text">Exploring strategy today — absolutely worth the effort. The details here are incredible. #strategy #gaming</p>
+        <div class="post-actions">
+          <button>♥ 4442</button>
+          <button>💬 81</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-1.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@homelab_nerd</span>
+          <span class="post-time">1h ago</span>
+        </div>
+        <p class="post-text">Exploring rank today — absolutely worth the effort. The details here are incredible. #rank #gaming</p>
+        <div class="post-actions">
+          <button>♥ 914</button>
+          <button>💬 116</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-2.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@bookworm</span>
+          <span class="post-time">10h ago</span>
+        </div>
+        <p class="post-text">Exploring esports today — absolutely worth the effort. The details here are incredible. #esports #gaming</p>
+        <div class="post-actions">
+          <button>♥ 981</button>
+          <button>💬 203</button>
+          <button>↗ Share</button>
+        </div>
+      </div>
+      <div class="post-card">
+        <div class="post-header">
+          <img src="/assets/img/hero-3.svg" alt="avatar" width="40" height="40" class="avatar">
+          <span class="username">@financefan</span>
+          <span class="post-time">16h ago</span>
+        </div>
+        <p class="post-text">Exploring highlight today — absolutely worth the effort. The details here are incredible. #highlight #gaming</p>
+        <div class="post-actions">
+          <button>♥ 2414</button>
+          <button>💬 17</button>
+          <button>↗ Share</button>
+        </div>
+      </div></div>
+    <aside class="who-to-follow">
+      <h3>Trending Tags</h3>
+      <ul id="trending-list"><li>Loading…</li></ul>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <p>page_social_10 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/sidebar.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('sidebar-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/comments.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('comments-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

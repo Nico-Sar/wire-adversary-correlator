@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Beauty & Cosmetics — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <link rel="stylesheet" href="/assets/css/dark-mode.css">
+  <script src="/assets/js/search.js" defer></script>
+  <script src="/assets/js/auth.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Beauty</a> › Beauty & Cosmetics</nav>
+    <div class="shop-banner">Skincare serums, lipsticks, and fragrances</div>
+  </header>
+  <main>
+    <h1>Beauty & Cosmetics</h1>
+    <p class="category-desc">Browse our curated selection of beauty & cosmetics. Skincare serums, lipsticks, and fragrances</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="SPF product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Spf — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality SPF for beauty enthusiasts. Rated 4.6/5 by verified buyers.</p>
+          <p class="product-price">$551.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="hyaluronic acid product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Hyaluronic Acid — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality hyaluronic acid for beauty enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$414.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="cruelty-free product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cruelty-Free — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality cruelty-free for beauty enthusiasts. Rated 4.8/5 by verified buyers.</p>
+          <p class="product-price">$419.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="fragrance product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Fragrance — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality fragrance for beauty enthusiasts. Rated 3.5/5 by verified buyers.</p>
+          <p class="product-price">$530.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="retinol serum product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Retinol Serum — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality retinol serum for beauty enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$66.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="SPF product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Spf — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality SPF for beauty enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$277.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="hyaluronic acid product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Hyaluronic Acid — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality hyaluronic acid for beauty enthusiasts. Rated 4.7/5 by verified buyers.</p>
+          <p class="product-price">$332.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-3.svg" alt="cruelty-free product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cruelty-Free — Beauty & Cosmetics Edition</h3>
+          <p class="product-desc">High-quality cruelty-free for beauty enthusiasts. Rated 3.7/5 by verified buyers.</p>
+          <p class="product-price">$98.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_19 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/comments.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('comments-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/config.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('config-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

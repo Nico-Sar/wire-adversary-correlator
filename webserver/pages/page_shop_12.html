@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Baby & Toddler — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/typography.css">
+  <link rel="stylesheet" href="/assets/css/components.css">
+  <script src="/assets/js/search.js" defer></script>
+  <script src="/assets/js/events.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Baby Products</a> › Baby & Toddler</nav>
+    <div class="shop-banner">Strollers, car seats, and nursery essentials</div>
+  </header>
+  <main>
+    <h1>Baby & Toddler</h1>
+    <p class="category-desc">Browse our curated selection of baby & toddler. Strollers, car seats, and nursery essentials</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="safety rating product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Safety Rating — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality safety rating for baby products enthusiasts. Rated 5.0/5 by verified buyers.</p>
+          <p class="product-price">$853.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="stroller product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Stroller — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality stroller for baby products enthusiasts. Rated 5.0/5 by verified buyers.</p>
+          <p class="product-price">$87.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="car seat product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Car Seat — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality car seat for baby products enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$590.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="BPA-free product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Bpa-Free — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality BPA-free for baby products enthusiasts. Rated 4.3/5 by verified buyers.</p>
+          <p class="product-price">$206.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="baby monitor product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Baby Monitor — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality baby monitor for baby products enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$257.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="safety rating product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Safety Rating — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality safety rating for baby products enthusiasts. Rated 4.4/5 by verified buyers.</p>
+          <p class="product-price">$630.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="stroller product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Stroller — Baby & Toddler Edition</h3>
+          <p class="product-desc">High-quality stroller for baby products enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$609.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_12 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/trending.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('trending-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/config.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('config-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

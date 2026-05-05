@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Gourmet Food & Drink — Shop</title>
+  <!-- 8 sub-resources -->
+  <link rel="stylesheet" href="/assets/css/animations.css">
+  <link rel="stylesheet" href="/assets/css/dark-mode.css">
+  <script src="/assets/js/api-client.js" defer></script>
+  <script src="/assets/js/events.js" defer></script>
+</head>
+<body>
+  <header class="shop-header">
+    <nav><a href="/">Home</a> › <a href="/shop">Food & Drink</a> › Gourmet Food & Drink</nav>
+    <div class="shop-banner">Artisan coffee, specialty oils, and gift hampers</div>
+  </header>
+  <main>
+    <h1>Gourmet Food & Drink</h1>
+    <p class="category-desc">Browse our curated selection of gourmet food & drink. Artisan coffee, specialty oils, and gift hampers</p>
+    <div class="filter-bar">
+      <button>Sort: Bestselling</button>
+      <button>Filter: In Stock</button>
+      <select><option>Price: Any</option><option>Under $50</option><option>$50–$200</option><option>$200+</option></select>
+    </div>
+    <div class="product-grid">
+        <div class="product-card">
+          <img src="/assets/img/avatar-01.svg" alt="single-origin product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Single-Origin — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality single-origin for food & drink enthusiasts. Rated 5.0/5 by verified buyers.</p>
+          <p class="product-price">$527.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-02.svg" alt="cold-pressed product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cold-Pressed — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality cold-pressed for food & drink enthusiasts. Rated 3.9/5 by verified buyers.</p>
+          <p class="product-price">$238.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-03.svg" alt="award-winning product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Award-Winning — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality award-winning for food & drink enthusiasts. Rated 4.1/5 by verified buyers.</p>
+          <p class="product-price">$252.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-04.svg" alt="artisan product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Artisan — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality artisan for food & drink enthusiasts. Rated 4.6/5 by verified buyers.</p>
+          <p class="product-price">$173.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/avatar-05.svg" alt="gift hamper product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Gift Hamper — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality gift hamper for food & drink enthusiasts. Rated 4.1/5 by verified buyers.</p>
+          <p class="product-price">$301.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-1.svg" alt="single-origin product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Single-Origin — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality single-origin for food & drink enthusiasts. Rated 3.6/5 by verified buyers.</p>
+          <p class="product-price">$215.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div>
+        <div class="product-card">
+          <img src="/assets/img/hero-2.svg" alt="cold-pressed product" loading="lazy" width="240" height="240">
+          <h3 class="product-title">Premium Cold-Pressed — Gourmet Food & Drink Edition</h3>
+          <p class="product-desc">High-quality cold-pressed for food & drink enthusiasts. Rated 4.9/5 by verified buyers.</p>
+          <p class="product-price">$127.00</p>
+          <button class="add-to-cart">Add to Cart</button>
+        </div></div>
+  </main>
+  <footer class="site-footer">
+    <p>page_shop_20 &mdash; 8 sub-resources</p>
+  </footer>
+  <script>
+(function(){
+    fetch('/assets/api/config.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('config-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+    fetch('/assets/api/sidebar.json').then(function(r){return r.json();}).then(function(d){var w=document.getElementById('sidebar-slot');if(w)w.setAttribute('data-loaded','1');}).catch(function(){});
+})();
+</script>
+</body>
+</html>

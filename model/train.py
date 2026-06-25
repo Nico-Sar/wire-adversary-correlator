@@ -17,10 +17,10 @@ This matches ShYSh's window-level scoring followed by flow-level aggregation.
 
 Usage:
   # Full training run:
-  python -m model.train --dataset data/baseline_dataset.npz --mode baseline
+  python -m model.train --dataset data/vpn_dataset.npz --mode vpn
 
   # Quick sanity check (first 10 URLs, 1 epoch):
-  python -m model.train --dataset data/baseline_dataset.npz --mode baseline \\
+  python -m model.train --dataset data/vpn_dataset.npz --mode vpn \\
       --max_urls 10 --epochs 1
 """
 
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset",   required=True,
                         help="Path to .npz produced by dataset_builder.py")
     parser.add_argument("--mode",      required=True,
-                        choices=["baseline", "tor", "vpn", "nym5", "nym2"])
+                        choices=["tor", "vpn", "nym5", "nym2"])
     parser.add_argument("--output",    default="./results",
                         help="Directory for checkpoints and logs")
     parser.add_argument("--epochs",    type=int, default=MODEL["epochs"])

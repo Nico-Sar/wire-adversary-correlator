@@ -7,7 +7,7 @@ Run after preprocess_pilot.sh to confirm the full pipeline is working
 before proceeding to model training.
  
 Usage (from repo root):
-    python3 scripts/check_pilot_npz.py data/pilot/baseline_dataset.npz
+    python3 scripts/check_pilot_npz.py data/pilot/vpn_dataset.npz
     python3 scripts/check_pilot_npz.py data/pilot/*.npz     # glob
  
 Checks:

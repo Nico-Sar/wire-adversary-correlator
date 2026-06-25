@@ -27,10 +27,10 @@ Output .npz arrays:
 
 Usage:
   python -m preprocessing.dataset_builder \\
-      --labels   data/baseline_visits.jsonl \\
-      --data_dir data/baseline \\
-      --output   data/baseline_dataset.npz \\
-      --mode     baseline
+      --labels   data/vpn_visits.jsonl \\
+      --data_dir data/vpn \\
+      --output   data/vpn_dataset.npz \\
+      --mode     vpn
 """
 
 import argparse
@@ -42,7 +42,7 @@ from typing import Optional
 import numpy as np
 
 from config.hyperparams import KDE, KDE_PER_MODE
-from config.infrastructure import get_client_private_ip
+from config.infrastructure import EGRESS_ONLY_MODES, get_client_private_ip
 from preprocessing.quartet_builder import compute_quartet
 
 logging.basicConfig(
@@ -68,7 +68,7 @@ def build_dataset(labels_jsonl: str,
 
     Args:
         labels_jsonl:  path to coordinator output JSONL
-                       (e.g. data/baseline_visits.jsonl)
+                       (e.g. data/vpn_visits.jsonl)
         data_dir:      directory containing {visit_id}_ingress.pcap and
                        {visit_id}_egress.pcap files
         output_path:   path for the output .npz file
@@ -109,7 +109,7 @@ def build_dataset(labels_jsonl: str,
     log.info(f"Dataset contains {len(all_urls)} unique URLs")
 
     # ── 3. Infer mode for KDE params ──────────────────────────────────────
-    mode = mode_filter or records[0].get("mode", "baseline")
+    mode = mode_filter or records[0].get("mode", "vpn")
     mode_kde = {**KDE_PER_MODE.get(mode, KDE), **kde_kwargs}
     log.info(f"Mode: {mode}  KDE params: {mode_kde}")
 
@@ -166,6 +166,8 @@ def build_dataset(labels_jsonl: str,
         # Check minimum packet count per stream (not in total).
         # A visit where one stream is empty produces all-zero windows for that
         # stream, which misleads training with corrupted positive pairs.
+        # Exception: egress-only modes (e.g. nym5) have no ingress traffic by
+        # design — their ingress streams are always zero and must not be checked.
         min_pkts_per_stream = KDE["min_packets"]  # 5, from config/hyperparams.py
         stream_counts = {
             "ingress_up":   quartet["n_ingress_up"],
@@ -173,7 +175,12 @@ def build_dataset(labels_jsonl: str,
             "egress_up":    quartet["n_egress_up"],
             "egress_down":  quartet["n_egress_down"],
         }
-        low_streams = [k for k, v in stream_counts.items() if v < min_pkts_per_stream]
+        checked_streams = (
+            ("egress_up", "egress_down")
+            if mode in EGRESS_ONLY_MODES
+            else ("ingress_up", "ingress_down", "egress_up", "egress_down")
+        )
+        low_streams = [k for k in checked_streams if stream_counts[k] < min_pkts_per_stream]
         if low_streams:
             log.warning(
                 f"  [{i+1}/{len(records)}] Low per-stream packet count "
@@ -182,14 +189,11 @@ def build_dataset(labels_jsonl: str,
             skipped += 1
             continue
 
-        # Guard: all four streams must have produced at least one window.
+        # Guard: checked streams must have produced at least one window.
         # slice_windows returns shape (0, L) if the KDE signal is shorter than
         # window_len (3 s). A zero-window visit would be padded to all-zeros
         # and labelled as a positive pair, corrupting training.
-        zero_streams = [
-            k for k in ("ingress_up", "ingress_down", "egress_up", "egress_down")
-            if quartet[k].shape[0] == 0
-        ]
+        zero_streams = [k for k in checked_streams if quartet[k].shape[0] == 0]
         if zero_streams:
             log.warning(
                 f"  [{i+1}/{len(records)}] Zero windows in {zero_streams} "
@@ -302,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument("--output",   required=True,
                         help="Output .npz path")
     parser.add_argument("--mode",     default=None,
-                        help="Filter by mode (baseline/tor/vpn/nym5/nym2)")
+                        help="Filter by mode (tor/vpn/nym5/nym2)")
     parser.add_argument("--seed",     type=int,   default=42)
     parser.add_argument("--sigma",    type=float, default=None)
     parser.add_argument("--duration", type=float, default=None)

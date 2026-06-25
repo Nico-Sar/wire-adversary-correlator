@@ -4,20 +4,19 @@
 # Full dataset collection with configurable visits per URL.
 #
 # URL sets:
-#   baseline / vpn / tor : config/urls.txt               (115 URLs)
-#   nym5                  : config/urls_nym5_extended.txt  (60 URLs)
-#   nym2                  : config/urls_nym2.txt           (100 URLs)
+#   vpn / tor : config/urls.txt                    (115 URLs)
+#   nym5      : config/urls_nym5_extended.txt       (60 URLs)
+#   nym2      : config/urls_nym2.txt                (100 URLs)
 #
-# Wall-time estimate per V visits/URL:
-#   Group 1 bottleneck (vpn): 115 × V × 6s / 60
-#   Group 2 bottleneck (nym2): 100 × V × 34s / 60 / 2   (2 parallel clients)
-#   Total ≈ V × (11.5 + 28.3) min ≈ V × 40 min
-#   V=4  →  ~2.7 h    V=8  →  ~5.3 h    V=16 →  ~10.7 h
+# Wall-time estimate per V visits/URL (all 4 modes run fully concurrently;
+# wall time is the slowest mode, not the sum):
+#   vpn/tor (2 clients):  115 × V × 6s  / 60 / 2
+#   nym2    (2 clients):  100 × V × 34s / 60 / 2   ← bottleneck
+#   V=4  →  ~2.3 h    V=8  →  ~4.5 h    V=16 →  ~9.1 h
 #
-# Parallelization (port-per-mode egress BPF isolates captures):
-#   Group 1 (simultaneous): baseline=port80  vpn=port8080  tor=port8081
-#   Then sequential: nym5=port8082  (2 parallel clients)
-#   Then sequential: nym2=port80    (2 parallel clients, safe after nym5 finishes)
+# Parallelization (port-per-mode egress BPF isolates captures — no staging
+# groups needed, since vpn=8080, tor=8081, nym5=8082, nym2=80 never collide):
+#   All 4 modes, both clients each, simultaneous.
 #
 # Prerequisites:
 #   bash scripts/setup_webserver_ports.sh   (run once to configure nginx)
@@ -56,10 +55,11 @@ if [[ "$NYM2_COUNT" -ne 100 ]]; then
     echo "[error] $URLS_NYM2: expected 100 URLs, got $NYM2_COUNT"; exit 1
 fi
 
-# Rough wall-time estimate (minutes)
-G1_WALL=$(( (115 * VISITS * 6 + 59) / 60 ))   # vpn is Group 1 bottleneck
-G2_WALL=$(( (100 * VISITS * 34 + 59) / 60 / 2 ))  # nym2 / 2 clients
-TOTAL_WALL=$(( G1_WALL + G2_WALL ))
+# Rough wall-time estimate (minutes) — slowest mode, not the sum
+VPN_WALL=$(( (115 * VISITS * 6  + 59) / 60 / 2 ))
+NYM2_WALL=$(( (100 * VISITS * 34 + 59) / 60 / 2 ))
+TOTAL_WALL=$VPN_WALL
+(( NYM2_WALL > TOTAL_WALL )) && TOTAL_WALL=$NYM2_WALL
 
 mkdir -p "$OUTPUT"
 
@@ -91,22 +91,14 @@ check_zero_byte_pcaps() {
 
 echo "========================================"
 echo " Full collection: V=$VISITS visits/URL"
-echo " URLs: baseline/vpn/tor=115  nym5=60  nym2=100"
+echo " URLs: vpn/tor=115  nym5=60  nym2=100"
 echo " Output: $OUTPUT"
 echo " Estimated wall time: ~${TOTAL_WALL} min"
 echo "========================================"
 
-# ── Group 1: baseline + vpn + tor (simultaneous) ─────────────────────────────
+# ── All 4 modes, both clients each, fully concurrent ──────────────────────────
 echo ""
-echo "[$(date +%H:%M:%S)] Group 1 start: baseline + vpn + tor running simultaneously..."
-
-python3 -m collector.coordinator \
-    --mode    baseline \
-    --urls    "$URLS" \
-    --visits  "$VISITS" \
-    --output  "$OUTPUT" \
-    --client  client1 &
-PID_BASELINE=$!
+echo "[$(date +%H:%M:%S)] Concurrent start: vpn + tor + nym5 + nym2 (2 clients each) ..."
 
 python3 -m collector.coordinator \
     --mode    vpn \
@@ -114,7 +106,15 @@ python3 -m collector.coordinator \
     --visits  "$VISITS" \
     --output  "$OUTPUT" \
     --client  vpn-client1 &
-PID_VPN=$!
+PID_VPN1=$!
+
+python3 -m collector.coordinator \
+    --mode    vpn \
+    --urls    "$URLS" \
+    --visits  "$VISITS" \
+    --output  "$OUTPUT" \
+    --client  vpn-client2 &
+PID_VPN2=$!
 
 python3 -m collector.coordinator \
     --mode    tor \
@@ -131,20 +131,6 @@ python3 -m collector.coordinator \
     --output  "$OUTPUT" \
     --client  tor-client2 &
 PID_TOR2=$!
-
-wait $PID_BASELINE || echo "[baseline]    exited with error — continuing"
-wait $PID_VPN      || echo "[vpn]         exited with error — continuing"
-wait $PID_TOR1     || echo "[tor-client1] exited with error — continuing"
-wait $PID_TOR2     || echo "[tor-client2] exited with error — continuing"
-echo "[$(date +%H:%M:%S)] Group 1 done."
-check_zero_byte_pcaps "$OUTPUT/baseline" "baseline"
-check_zero_byte_pcaps "$OUTPUT/vpn"      "vpn"
-check_zero_byte_pcaps "$OUTPUT/tor"      "tor"
-
-# ── Nym5 (parallel clients, after Group 1) ────────────────────────────────────
-# Egress BPF port 8082 — no conflict with nym2 (port 80, runs after).
-echo ""
-echo "[$(date +%H:%M:%S)] nym5 start (nym5-client1 + nym5-client2 in parallel)..."
 
 python3 -m collector.coordinator \
     --mode    nym5 \
@@ -164,16 +150,6 @@ python3 -m collector.coordinator \
     --rotate-circuits &
 PID_NYM5_2=$!
 
-wait $PID_NYM5_1 || echo "[nym5-client1] exited with error — continuing"
-wait $PID_NYM5_2 || echo "[nym5-client2] exited with error — continuing"
-echo "[$(date +%H:%M:%S)] nym5 done."
-check_zero_byte_pcaps "$OUTPUT/nym5" "nym5"
-
-# ── Nym2 (parallel clients, after nym5) ──────────────────────────────────────
-# Egress BPF port 80 — safe because nym5 (port 8082) has finished.
-echo ""
-echo "[$(date +%H:%M:%S)] nym2 start (nym2-client1 + nym2-client2 in parallel)..."
-
 python3 -m collector.coordinator \
     --mode    nym2 \
     --urls    "$URLS_NYM2" \
@@ -192,9 +168,19 @@ python3 -m collector.coordinator \
     --rotate-circuits &
 PID_NYM2_2=$!
 
-wait $PID_NYM2_1 || echo "[nym2-client1] exited with error — continuing"
-wait $PID_NYM2_2 || echo "[nym2-client2] exited with error — continuing"
-echo "[$(date +%H:%M:%S)] nym2 done."
+wait $PID_VPN1   || echo "[vpn-client1]   exited with error — continuing"
+wait $PID_VPN2   || echo "[vpn-client2]   exited with error — continuing"
+wait $PID_TOR1   || echo "[tor-client1]   exited with error — continuing"
+wait $PID_TOR2   || echo "[tor-client2]   exited with error — continuing"
+wait $PID_NYM5_1 || echo "[nym5-client1]  exited with error — continuing"
+wait $PID_NYM5_2 || echo "[nym5-client2]  exited with error — continuing"
+wait $PID_NYM2_1 || echo "[nym2-client1]  exited with error — continuing"
+wait $PID_NYM2_2 || echo "[nym2-client2]  exited with error — continuing"
+echo "[$(date +%H:%M:%S)] All modes done."
+
+check_zero_byte_pcaps "$OUTPUT/vpn"  "vpn"
+check_zero_byte_pcaps "$OUTPUT/tor"  "tor"
+check_zero_byte_pcaps "$OUTPUT/nym5" "nym5"
 check_zero_byte_pcaps "$OUTPUT/nym2" "nym2"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -204,7 +190,7 @@ echo " Collection complete."
 echo " JSONL logs:"
 ls -lh "$OUTPUT"/*.jsonl 2>/dev/null || echo "  (none found — check for errors above)"
 echo " Pcap counts:"
-for mode in baseline vpn tor nym5 nym2; do
+for mode in vpn tor nym5 nym2; do
     count=$(ls "$OUTPUT/$mode/"*.pcap 2>/dev/null | wc -l)
     echo "  $mode: $count pcaps"
 done

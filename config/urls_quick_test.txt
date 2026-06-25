@@ -1,5 +1,5 @@
 # Quick test URL list — 6 URLs, one of each content type
-# Used by: baseline, vpn, tor, nym2
+# Used by: vpn, tor
 page_html_1.html
 page_heavy_dashboard_1.html
 data_json_1.json

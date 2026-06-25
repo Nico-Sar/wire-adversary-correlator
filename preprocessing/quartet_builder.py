@@ -40,7 +40,7 @@ def compute_quartet(ingress_pcap:      str,
         client_private_ip: private LAN IP of the visiting client (e.g. "10.0.0.3").
                            Used as local_ip at the ingress capture point so that
                            UP = client→network and DOWN = network→client.
-        mode:              anonymity mode ("baseline", "tor", "nym", "vpn").
+        mode:              anonymity mode ("tor", "nym5", "nym2", "vpn").
                            Selects KDE_PER_MODE defaults for duration and sigma.
         **kde_kwargs:      override any KDE_PER_MODE default explicitly.
 

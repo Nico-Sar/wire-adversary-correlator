@@ -73,7 +73,7 @@ class TestSliceWindows:
 
     def test_exact_fit_unchanged(self):
         """Signal whose length already satisfies (n-window)%step==0 is not padded."""
-        # 300 samples = baseline mode KDE grid: (300-30)%15=0, no padding expected.
+        # 300 samples = vpn mode KDE grid: (300-30)%15=0, no padding expected.
         signal = np.ones(300, dtype=np.float32)
         windows = slice_windows(signal, window_len=30, overlap=0.5)
         assert windows.shape[0] == 19

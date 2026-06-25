@@ -2,7 +2,7 @@
 """
 scripts/analyze_quick_test.py
 ==============================
-Full preprocessing + analysis pipeline for data/quick_test/ across all 5 modes.
+Full preprocessing + analysis pipeline for data/quick_test/ across all 4 modes.
 
 Reports:
   1. Visits built vs skipped per mode with skip reasons
@@ -35,7 +35,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from config.hyperparams import KDE, KDE_PER_MODE
-from config.infrastructure import get_client_private_ip
+from config.infrastructure import EGRESS_ONLY_MODES, get_client_private_ip
 from preprocessing.kde import kde_shape, split_directions
 from preprocessing.pcap_parser import extract_packets
 from preprocessing.windower import carve_time_window, slice_windows
@@ -57,11 +57,6 @@ OUTPUT_ROOT = DATA_ROOT
 PLOT_DIR    = DATA_ROOT / "kde_plots"
 
 MODES = {
-    "baseline": {
-        "labels":   DATA_ROOT / "baseline_visits.jsonl",
-        "data_dir": DATA_ROOT / "baseline",
-        "output":   OUTPUT_ROOT / "baseline_dataset.npz",
-    },
     "vpn": {
         "labels":   DATA_ROOT / "vpn_visits.jsonl",
         "data_dir": DATA_ROOT / "vpn",
@@ -209,17 +204,21 @@ def build_mode(mode: str, cfg: dict) -> dict:
             "egress_up":    quartet["n_egress_up"],
             "egress_down":  quartet["n_egress_down"],
         }
-        low_streams = [k for k, v in stream_counts.items() if v < min_pkts]
+        # Egress-only modes (nym5) have no ingress traffic by design; skip the
+        # ingress low-packet and zero-window guards so valid visits are kept.
+        checked_streams = (
+            ("egress_up", "egress_down")
+            if mode in EGRESS_ONLY_MODES
+            else ("ingress_up", "ingress_down", "egress_up", "egress_down")
+        )
+        low_streams = [k for k in checked_streams if stream_counts[k] < min_pkts]
         if low_streams:
             stats["skipped"] += 1
             stats["skip_reasons"]["low_packet_count"] += 1
             log.warning(f"  [{i+1}] {visit_id}: low stream pkts {low_streams} {stream_counts} — skipping")
             continue
 
-        zero_streams = [
-            k for k in ("ingress_up", "ingress_down", "egress_up", "egress_down")
-            if quartet[k].shape[0] == 0
-        ]
+        zero_streams = [k for k in checked_streams if quartet[k].shape[0] == 0]
         if zero_streams:
             stats["skipped"] += 1
             stats["skip_reasons"]["zero_windows"] += 1
@@ -260,14 +259,20 @@ def build_mode(mode: str, cfg: dict) -> dict:
         stats["npz_path"] = None
         return stats
 
-    n_windows_all = [a.shape[0] for a in stats["_ingress_up_list"]]
+    # For egress-only modes the signal is in egress; use it for shape reference.
+    ref_list = (
+        stats["_egress_up_list"]
+        if mode in EGRESS_ONLY_MODES
+        else stats["_ingress_up_list"]
+    )
+    n_windows_all = [a.shape[0] for a in ref_list]
     if len(set(n_windows_all)) != 1:
         log.error(f"[{mode}] Inconsistent window counts: {set(n_windows_all)}")
         stats["npz_path"] = None
         return stats
 
     stats["n_windows"]  = n_windows_all[0]
-    stats["window_len"] = stats["_ingress_up_list"][0].shape[1]
+    stats["window_len"] = ref_list[0].shape[1]
 
     rng = np.random.default_rng(42)
     X_iu = np.stack(stats["_ingress_up_list"])
@@ -499,14 +504,13 @@ def main():
         else:
             print(f"  [{mode}] no NPZ available — skipping plot")
 
-    # Cross-mode comparison via plot_kde_shapes.py (all 5 modes)
+    # Cross-mode comparison via plot_kde_shapes.py (all 4 modes)
     npz_available = {m: all_stats[m]["npz_path"] for m in MODES
                      if all_stats[m].get("npz_path") and all_stats[m]["npz_path"].exists()}
-    if len(npz_available) >= 3:
+    if len(npz_available) >= 2:
         import subprocess
         cmd = [
             sys.executable, "scripts/plot_kde_shapes.py",
-            "--baseline", str(npz_available.get("baseline", "")),
             "--tor",      str(npz_available.get("tor",  "")),
             "--vpn",      str(npz_available.get("vpn",  "")),
             "--output",   str(PLOT_DIR / "cross_mode_comparison.png"),

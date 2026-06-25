@@ -1112,10 +1112,20 @@ def run_single_visit(url: str, mode: str,
 def run_dataset(url_list_path: str, mode: str,
                 visits_per_url: int, output_dir: Path,
                 client_id: str,
-                rotate_circuits: bool = False):
+                rotate_circuits: bool = False,
+                rotate_every: int = 1):
     """
     Iterates over URLs × visits, calls run_single_visit for each,
     and appends VisitRecords to a .jsonl metadata log.
+
+    rotate_every: rotate the circuit only on visit serials 1, N+1, 2N+1, ...
+    (1-indexed, so the very first visit always gets a fresh circuit); the
+    N-1 visits in between reuse whatever circuit is already up. serial is
+    the absolute per-client visit counter (not reset per-URL), so the
+    rotation cadence stays correct across a resumed run. Wedge recovery is
+    unaffected either way: it restarts nym-vpnd / reconnects independently
+    of this schedule whenever check_client_health fails, regardless of
+    whether this particular visit was due to rotate.
     """
     if client_id not in CLIENT_GROUPS.get(mode, []):
         print(f"[coordinator] WARNING: {client_id} is not the standard "
@@ -1217,7 +1227,11 @@ def run_dataset(url_list_path: str, mode: str,
                 visit_count += 1
                 overall   = done_total + visit_count
                 visit_id  = f"{client_id}_v{serial:05d}"
-                print(f"[{overall}/{total}] {visit_id} — {url}")
+                should_rotate = rotate_circuits and ((serial - 1) % rotate_every == 0)
+                print(f"[{overall}/{total}] {visit_id} — {url}"
+                      + ("" if should_rotate or not rotate_circuits
+                         else f"  [circuit] reusing (rotate-every={rotate_every}, "
+                              f"due at serial {((serial - 1) // rotate_every) * rotate_every + 1})"))
 
                 if overall % 50 == 0:
                     print(f"[coordinator] periodic clock sync check at visit {overall}...")
@@ -1260,7 +1274,7 @@ def run_dataset(url_list_path: str, mode: str,
                                 output_dir,
                                 visit_id=visit_id,
                                 client_id=client_id,
-                                rotate_circuits=rotate_circuits,
+                                rotate_circuits=should_rotate,
                                 client_cfg=CLIENTS[client_id],
                             )
                             with log_path.open("a") as f:
@@ -1404,8 +1418,14 @@ if __name__ == "__main__":
     parser.add_argument("--client",          default="vpn-client1",
                         choices=list(CLIENTS.keys()))
     parser.add_argument("--rotate-circuits", action="store_true", default=False,
-                        help="Rotate Tor circuit (NEWNYM) or Nym gateway before each visit")
+                        help="Rotate Tor circuit (NEWNYM) or Nym gateway every --rotate-every visits")
+    parser.add_argument("--rotate-every",    type=int, default=1,
+                        help="Rotate only every Nth visit (default 1 = every visit, "
+                             "same as before). Visits in between reuse the existing "
+                             "circuit — no reconnect, no rotation sleep.")
     args = parser.parse_args()
+    if args.rotate_every < 1:
+        parser.error("--rotate-every must be >= 1")
 
     run_dataset(args.urls, args.mode, args.visits, Path(args.output), args.client,
-                rotate_circuits=args.rotate_circuits)
+                rotate_circuits=args.rotate_circuits, rotate_every=args.rotate_every)

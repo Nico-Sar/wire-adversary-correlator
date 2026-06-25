@@ -695,6 +695,50 @@ def fire_alert(output_dir: Path, message: str) -> None:
             print(f"  [alert] webhook POST failed: {e}")
 
 
+# ── Mid-visit SOCKS5 wedge classification ───────────────────────────────────
+#
+# Preflight wedge detection (check_client_health) runs BEFORE run_single_visit
+# starts a capture/rotation/Playwright cycle — it catches a SOCKS5 listener
+# that's already down. But a listener that's healthy at preflight time can
+# still die mid-visit, between the preflight check and Playwright's
+# page.goto(). When that happens, Playwright surfaces it as a normal (non-
+# exception) page-load error string, not an SSH-level failure — so without
+# this classification, run_single_visit just returns a VisitRecord with that
+# error baked into visit_status, and the caller's wedge-aware loop treats any
+# non-exception return as final, permanently losing the visit instead of
+# requeuing it like a preflight-caught wedge.
+#
+# Classification is based on actual error strings observed in a live 20h
+# validation run (data/validation_run_20260625_0136/nym5_visits.jsonl):
+#   - "NS_ERROR_PROXY_CONNECTION_REFUSED": 108/646 nym5 visits (~17%). Firefox
+#     couldn't reach the configured SOCKS5 proxy at 127.0.0.1:1080 at all —
+#     this is unambiguously "the local SOCKS5 listener is down/wedged", the
+#     exact condition check_client_health's nym5 branch already detects.
+#     Confirmed wedge-class: every occurrence had thousands of ingress
+#     packets already captured (the zero-ingress guard never fires for
+#     these), meaning the *previous* rotation succeeded and the listener
+#     died after that — not a dead target.
+#   - "NS_ERROR_CONNECTION_REFUSED" (without PROXY_): only 3/646, and each one
+#     shows substantial ingress (981-1837 packets) AND non-trivial egress
+#     bytes — the proxy was up and routing; this specific request was refused
+#     at the destination/relay layer. Deliberately NOT classified as
+#     wedge-class: requeuing these indefinitely would be retrying a failure
+#     that has nothing to do with SOCKS5 health, exactly the "genuine
+#     dead-site error" case that must not be requeued forever.
+_SOCKS5_WEDGE_ERROR_MARKERS = ("NS_ERROR_PROXY_CONNECTION_REFUSED",)
+
+
+def is_socks5_wedge_error(visit_status: str) -> bool:
+    return any(marker in visit_status for marker in _SOCKS5_WEDGE_ERROR_MARKERS)
+
+
+class SOCKS5WedgeError(RuntimeError):
+    """Raised by run_single_visit when the page load failed with a SOCKS5-
+    wedge-class error — lets the wedge-aware caller loop requeue it exactly
+    like a preflight-detected wedge, instead of losing it as a terminal
+    error."""
+
+
 def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool, str]:
     """
     Returns (healthy, reason). reason is "" when healthy, else a short
@@ -853,15 +897,17 @@ def run_single_visit(url: str, mode: str,
                      visit_id: str,
                      client_id: str,
                      rotate_circuits: bool = False,
-                     client_cfg: dict | None = None,
-                     max_retries: int = 1) -> VisitRecord:
+                     client_cfg: dict | None = None) -> VisitRecord:
     """
     Full lifecycle for one visit:
       0. (Optional) Rotate circuit — NEWNYM for Tor, reconnect for Nym
       1. Start ingress + egress captures simultaneously (threaded)
-      2. Trigger browser visit on client (retried once on PROXY_CONNECTION_REFUSED)
+      2. Trigger browser visit on client
       3. Stop captures, pull pcaps, cleanup remote files
-      4. Return VisitRecord for logging
+      4. Raise SOCKS5WedgeError if the page load failed with a proxy-refused
+         error (mid-visit SOCKS5 wedge) — the caller's wedge-aware loop
+         catches this and requeues, same as a preflight-detected wedge
+      5. Return VisitRecord for logging
 
     pcaps are written under a per-client subdirectory of capture_dir so that
     parallel coordinators sharing the same routers never race on filenames.
@@ -980,21 +1026,18 @@ def run_single_visit(url: str, mode: str,
         print(f"  [capture] started — ingress PID {ingress_pid}, egress PID {egress_pid}")
 
         # ── Trigger the browser visit ─────────────────────────────────────
+        # No blind same-process retry here on PROXY_CONNECTION_REFUSED: a
+        # proxy refusing connections mid-visit means the SOCKS5 listener
+        # itself is down, and retrying without restarting nym-vpnd just
+        # fails again. See the SOCKS5-wedge-class check below, which raises
+        # instead so the caller's wedge-aware loop (preflight checks use the
+        # same path) can actually fix it — restart nym-vpnd, poll for
+        # health, requeue this same visit_id — before trying again.
         proxy = PROXY_MAP.get(mode)
         visit_meta = trigger_visit(client_ssh, url, proxy, visit_id, mode)
         t_visit_start = visit_meta.get("t_start", time.time())
         t_visit_end   = visit_meta.get("t_end",   time.time())
         visit_status  = visit_meta.get("status",  "unknown")
-
-        for _ in range(max_retries):
-            if "NS_ERROR_PROXY_CONNECTION_REFUSED" not in visit_status:
-                break
-            print(f"  [retry] PROXY_CONNECTION_REFUSED — waiting 10s and retrying")
-            time.sleep(10)
-            visit_meta    = trigger_visit(client_ssh, url, proxy, visit_id, mode)
-            t_visit_start = visit_meta.get("t_start", time.time())
-            t_visit_end   = visit_meta.get("t_end",   time.time())
-            visit_status  = visit_meta.get("status",  "unknown")
 
         print(f"  [visit]   {visit_status} — {visit_meta.get('duration_s', '?')}s")
         time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
@@ -1034,6 +1077,16 @@ def run_single_visit(url: str, mode: str,
     # ── Release collection lock (nym modes only) ───────────────────────────
     if mode in ("nym5", "nym2"):
         ssh_run(client_ssh, "rm -f /tmp/nym_collection_active", check=False)
+
+    # ── Mid-visit SOCKS5-wedge check ────────────────────────────────────────
+    # Capture/pcap-pull/lock-release above already ran to completion — no
+    # resources are leaked by raising now instead of returning. Raising
+    # (rather than returning a VisitRecord with a bad status) is what lets
+    # the caller's wedge-aware loop treat this exactly like a preflight-
+    # detected wedge: restart nym-vpnd, poll for health, requeue this same
+    # visit_id, bounded by the same WEDGE_MAX_RECOVERY_ATTEMPTS.
+    if is_socks5_wedge_error(visit_status):
+        raise SOCKS5WedgeError(visit_status.splitlines()[0])
 
     return VisitRecord(
         visit_id        = visit_id,

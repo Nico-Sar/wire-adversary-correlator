@@ -1,30 +1,42 @@
 #!/usr/bin/env bash
 # scripts/run_stage.sh
 # =====================
-# Runs ONE stage of the nym campaign: all 4 modes, both clients each, fully
-# concurrent (collect_quick_test.sh pattern — backgrounded, one wait, each
-# client -> its own logfile, shared output dir).
+# Runs ONE step of the nym campaign's two independent stage grids: vpn/tor
+# against a full-list stage, nym5/nym2 against a light-list stage — these
+# are NOT the same URLs and advance at different paces (see
+# scripts/_stage_slices.py), so either argument can be "NONE" if that grid
+# has no stage active this round (e.g. light grid exhausted before full grid).
+# Whichever modes ARE active launch concurrently (collect_quick_test.sh
+# pattern — backgrounded, one wait, each client -> its own logfile, shared
+# output dir).
 #
-# Locked parameters for this campaign:
-#   --visits 25 (per client per URL; 2 clients -> 50 visits/URL/mode)
-#   nym5/nym2: --rotate-circuits --rotate-every 3
-#   vpn/tor:   --rotate-circuits (every visit — unaffected by this campaign)
+# Locked parameters:
+#   vpn/tor:   --visits 25/client/URL (--rotate-circuits every visit)
+#   nym5/nym2: --rotate-circuits --rotate-every 3. Visits/client/URL is NOT
+#              hardcoded — set VISITS_LIGHT explicitly (env var) before
+#              calling this script. There is no safe default: 25 (matching
+#              vpn/tor) yields only ~13.25k flows/mode on the 265-URL light
+#              list, not the 25k target — see docs/CAMPAIGN_RUNBOOK.md
+#              "Light-list visits/URL decision" for the arithmetic. This
+#              script refuses to launch nym5/nym2 if VISITS_LIGHT is unset,
+#              rather than silently guessing.
 #
 # Usage:
-#   bash scripts/run_stage.sh <stage_urls_file> <output_dir> [stage_label]
+#   bash scripts/run_stage.sh <full_urls_file|NONE> <light_urls_file|NONE> <output_dir> [label]
 #
-# Exit code: 0 if all 8 client processes completed (their own visit_status
-# may still include errors/wedges — that's audit_stage.sh's job to assess).
-# Non-zero if the stage could not be launched at all (agent missing, routers
-# unreachable, or a client never came back after the hang-resilience retry).
+# Exit code: 0 if all launched client processes completed (their own
+# visit_status may still include errors/wedges — audit_stage.sh's job).
+# Non-zero if the stage could not be launched at all.
 
 set -uo pipefail   # no -e: one client's failure must not kill the others
 
-STAGE_URLS="${1:?usage: run_stage.sh <stage_urls_file> <output_dir> [label]}"
-OUTPUT="${2:?usage: run_stage.sh <stage_urls_file> <output_dir> [label]}"
-LABEL="${3:-stage}"
+FULL_URLS="${1:?usage: run_stage.sh <full_urls_file|NONE> <light_urls_file|NONE> <output_dir> [label]}"
+LIGHT_URLS="${2:?usage: run_stage.sh <full_urls_file|NONE> <light_urls_file|NONE> <output_dir> [label]}"
+OUTPUT="${3:?usage: run_stage.sh <full_urls_file|NONE> <light_urls_file|NONE> <output_dir> [label]}"
+LABEL="${4:-stage}"
 
-VISITS=25
+VISITS_FULL=25
+VISITS_LIGHT="${VISITS_LIGHT:-}"   # no safe default — see header comment
 ROTATE_EVERY_NYM=3
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/nico-thesis}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
@@ -44,12 +56,21 @@ declare -A CLIENT_IP=(
 )
 
 # ── 0. Pre-flight ──────────────────────────────────────────────────────────────
-[[ -f "$STAGE_URLS" ]] || die "stage URLs file not found: $STAGE_URLS"
-
-# Doubled-URL guard — same check as validate_urls.sh, re-asserted here in case
-# a slice file was hand-edited after stage 0.
-bad_lines=$(grep -nE '^[[:space:]]*https?://' "$STAGE_URLS" || true)
-[[ -z "$bad_lines" ]] || die "$STAGE_URLS contains full URLs, not bare paths:\n$bad_lines"
+RUN_FULL=0; RUN_LIGHT=0
+if [[ "$FULL_URLS" != "NONE" ]]; then
+    [[ -f "$FULL_URLS" ]] || die "full URLs file not found: $FULL_URLS"
+    bad=$(grep -nE '^[[:space:]]*https?://' "$FULL_URLS" || true)
+    [[ -z "$bad" ]] || die "$FULL_URLS contains full URLs, not bare paths:\n$bad"
+    RUN_FULL=1
+fi
+if [[ "$LIGHT_URLS" != "NONE" ]]; then
+    [[ -f "$LIGHT_URLS" ]] || die "light URLs file not found: $LIGHT_URLS"
+    bad=$(grep -nE '^[[:space:]]*https?://' "$LIGHT_URLS" || true)
+    [[ -z "$bad" ]] || die "$LIGHT_URLS contains full URLs, not bare paths:\n$bad"
+    RUN_LIGHT=1
+    [[ -n "$VISITS_LIGHT" ]] || die "VISITS_LIGHT is not set and a light-list stage is active. Decide visits/URL for nym5/nym2 first — see docs/CAMPAIGN_RUNBOOK.md 'Light-list visits/URL decision'. Example: VISITS_LIGHT=48 bash scripts/run_stage.sh ..."
+fi
+(( RUN_FULL || RUN_LIGHT )) || die "both FULL_URLS and LIGHT_URLS are NONE — nothing to run"
 
 log "Checking ssh-agent has the campaign key loaded..."
 ssh-add -l 2>/dev/null | grep -qi "nico-thesis\|nicolas-thesis" \
@@ -67,9 +88,7 @@ mkdir -p "$OUTPUT"
 # uncaught RuntimeError (coordinator.py's initial connect is deliberately
 # fail-fast — by design, for ad-hoc runs; the campaign launcher needs to be
 # the resilient layer on top). Detect, hcloud reboot, poll, then launch that
-# client. If it never comes back within budget, skip it for THIS stage only
-# — the other 7 clients still launch; this mode just gets fewer visits this
-# stage, which audit_stage.sh's yield check will surface.
+# client. If it never comes back within budget, skip it for THIS stage only.
 ensure_client_reachable() {
     local client_id="$1" host="${CLIENT_IP[$1]}"
     if ssh $SSH_OPTS "root@$host" 'echo ok' >/dev/null 2>&1; then
@@ -94,10 +113,13 @@ ensure_client_reachable() {
     return 1
 }
 
+CANDIDATES=()
+(( RUN_FULL ))  && CANDIDATES+=(vpn-client1 vpn-client2 tor-client1 tor-client2)
+(( RUN_LIGHT )) && CANDIDATES+=(nym5-client1 nym5-client2 nym2-client1 nym2-client2)
+
 REACHABLE=()
 SKIPPED=()
-for client_id in vpn-client1 vpn-client2 tor-client1 tor-client2 \
-                 nym5-client1 nym5-client2 nym2-client1 nym2-client2; do
+for client_id in "${CANDIDATES[@]}"; do
     if ensure_client_reachable "$client_id"; then
         REACHABLE+=("$client_id")
     else
@@ -121,29 +143,30 @@ DROP_MONITOR_PID=$!
 # ── 3. Launch all reachable clients, concurrent, backgrounded ─────────────────
 declare -A PIDS
 launch_client() {
-    local client_id="$1" mode="$2"; shift 2
-    python3 -m collector.coordinator --mode "$mode" --urls "$STAGE_URLS" \
-        --visits "$VISITS" --output "$OUTPUT" --client "$client_id" "$@" \
+    local client_id="$1" mode="$2" urls="$3" visits="$4"; shift 4
+    python3 -m collector.coordinator --mode "$mode" --urls "$urls" \
+        --visits "$visits" --output "$OUTPUT" --client "$client_id" "$@" \
         > "$OUTPUT/log_${client_id}.txt" 2>&1 &
     PIDS[$client_id]=$!
 }
 
 is_reachable() { printf '%s\n' "${REACHABLE[@]}" | grep -qx "$1"; }
 
-log "Launching stage: ${#REACHABLE[@]}/8 clients (${REACHABLE[*]})"
-is_reachable vpn-client1  && launch_client vpn-client1  vpn
-is_reachable vpn-client2  && launch_client vpn-client2  vpn
-is_reachable tor-client1  && launch_client tor-client1  tor  --rotate-circuits
-is_reachable tor-client2  && launch_client tor-client2  tor  --rotate-circuits
-is_reachable nym5-client1 && launch_client nym5-client1 nym5 --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym5-client2 && launch_client nym5-client2 nym5 --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client1 && launch_client nym2-client1 nym2 --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client2 && launch_client nym2-client2 nym2 --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- full=$RUN_FULL light=$RUN_LIGHT"
+is_reachable vpn-client1  && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL"
+is_reachable vpn-client2  && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL"
+is_reachable tor-client1  && launch_client tor-client1  tor  "$FULL_URLS" "$VISITS_FULL" --rotate-circuits
+is_reachable tor-client2  && launch_client tor-client2  tor  "$FULL_URLS" "$VISITS_FULL" --rotate-circuits
+is_reachable nym5-client1 && launch_client nym5-client1 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 
 {
-    echo "stage_urls=$STAGE_URLS"
+    echo "full_urls=$FULL_URLS"
+    echo "light_urls=$LIGHT_URLS"
     echo "output=$OUTPUT"
-    echo "launched=${!PIDS[*]}"
+    echo "launched=${!PIDS[*]:-none}"
     echo "skipped=${SKIPPED[*]:-none}"
     for c in "${!PIDS[@]}"; do echo "pid_$c=${PIDS[$c]}"; done
 } > "$OUTPUT/stage_meta.txt"

@@ -196,17 +196,28 @@ n_fail=$((n_total - n_pass))
 } | tee "$REPORT"
 
 # Validated list, sorted alphabetically — this exact ordering is what
-# scripts/run_campaign.sh's stage-cut math assumes (matches model/dataset.py's
+# scripts/_stage_slices.py's stage-cut math assumes (matches model/dataset.py's
 # sorted(set(urls)) split logic).
 awk -F'\t' '$2=="OK" && $3=="OK" && $4=="OK" && $5=="OK" {print $1}' "$ALL_RESULTS" \
     | sort > "$VALIDATED"
+
+# Light subset (nym5/nym2): html+json only, a strict subset of $VALIDATED by
+# construction (same grep filter, same source file) — no re-fetch needed,
+# these URLs already passed all 4 targets above. Heavy mp3/mp4/pdf/zip are
+# too slow/timeout-prone through nym5's 5-hop path (NS_ERROR_NET_TIMEOUT
+# observed in testing) — see docs/CAMPAIGN_RUNBOOK.md for the per-mode
+# design this feeds into.
+VALIDATED_LIGHT="$OUTDIR/validated_urls_light.txt"
+grep -E '\.(html|json)$' "$VALIDATED" > "$VALIDATED_LIGHT" || true
+n_light=$(wc -l < "$VALIDATED_LIGHT")
 
 rm -rf "$WORKDIR"
 
 echo ""
 echo "================================================================"
-echo " Validated URL list: $VALIDATED  ($n_pass URLs)"
-echo " Full report:        $REPORT"
+echo " Validated URL list (full, vpn/tor):   $VALIDATED  ($n_pass URLs)"
+echo " Validated URL list (light, nym5/nym2): $VALIDATED_LIGHT  ($n_light URLs)"
+echo " Full report:                           $REPORT"
 echo "================================================================"
 if [[ "$n_pass" -lt 500 ]]; then
     echo ""

@@ -26,34 +26,37 @@ others. Instead: **two independent stage grids** (full and light), each
 chunked into ~50-URL stages on its own URL count — see "Two grids, one round
 counter" below.
 
-## ⚠️ Light-list visits/URL decision — REQUIRED before launch
+## Light-list visits/URL — DECIDED: `VISITS_LIGHT=48`
 
-**265 light URLs × 50 visits/URL (matching vpn/tor's cadence) = 13,250 flows,
-not 25,000.** Hitting 25k on 265 URLs needs ~94-95 visits/URL total
-(25000 / 265 = 94.3), i.e. **47-48 visits/client/URL** (2 clients), not 25.
+265 light URLs × 50 visits/URL (matching vpn/tor's cadence) would only be
+13,250 flows, not 25,000. Hitting 25k on 265 URLs needs ~94-95 visits/URL
+total (25000 / 265 = 94.3). **Decided: 48 visits/client/URL** (96 total) =
+**25,440 flows/mode** (slightly over target, rounding up rather than landing
+99.6% short at 47).
 
-| Option | `VISITS_LIGHT` (per client/URL) | Total visits/URL | Flows/mode (265 URLs) |
+| Option (considered) | `VISITS_LIGHT` | Total visits/URL | Flows/mode (265 URLs) |
 |---|---|---|---|
-| Match vpn/tor cadence | 25 | 50 | **13,250** (52% of target) |
+| Match vpn/tor cadence | 25 | 50 | 13,250 (52% of target) |
 | Hit 25k, round down | 47 | 94 | 24,910 |
-| Hit 25k, round up | 48 | 96 | 25,440 |
+| **Hit 25k, round up — chosen** | **48** | **96** | **25,440** |
 
-There is **no default** — `scripts/run_stage.sh` and `scripts/run_campaign.sh`
-both refuse to launch any light-list (nym5/nym2) stage unless `VISITS_LIGHT`
-is set explicitly:
+`scripts/run_stage.sh` and `scripts/run_campaign.sh` both refuse to launch
+any light-list (nym5/nym2) stage unless `VISITS_LIGHT` is set in the
+environment — there is no hardcoded default in the scripts themselves, by
+design, even though the decision above is now final:
 
 ```bash
-export VISITS_LIGHT=48   # or 47, or 25 if you're accepting ~13k for nym — YOUR call
+export VISITS_LIGHT=48
 ```
 
-This also means nym5/nym2 will need proportionally longer per-round
-collection time than vpn/tor at the same URL-count-per-stage — factor that
+This also means nym5/nym2 need roughly **2x** the per-round collection time
+vpn/tor need at the same URL count (48 vs 25 visits/client/URL) — factor that
 into the budget tracker's per-round read, not just the final total.
 
 ## Locked parameters (everything else)
 
 - vpn/tor: 500 URLs × 25 visits/client/URL = 25k flows/mode.
-- nym5/nym2: 265 URLs × `VISITS_LIGHT` visits/client/URL (see above).
+- nym5/nym2: 265 URLs × 48 visits/client/URL = 25,440 flows/mode.
 - `--rotate-every 3` for nym5/nym2 (measured throughput win — prior session).
   vpn/tor rotate every visit (`--rotate-circuits`, no `--rotate-every`).
 - Staging: ~50 URLs/stage within each split, independently per list (11
@@ -93,8 +96,9 @@ cat data/campaign/stage0/validation_report.txt
 #      (expect 265 on the full real list; fewer if some html/json URLs failed
 #      validation).
 
-# 3. DECIDE VISITS_LIGHT (see section above) — no default, must be explicit.
-export VISITS_LIGHT=48   # example — this is YOUR decision, not a default
+# 3. VISITS_LIGHT — decided at 48 (see section above). Scripts still require
+#    it set explicitly in the environment; there's no hardcoded default.
+export VISITS_LIGHT=48
 
 # 4. Launch the campaign. <license_deadline> is the hard 20-day cap date —
 #    used by audit_stage.sh's budget tracker every round.

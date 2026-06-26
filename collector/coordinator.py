@@ -50,7 +50,7 @@ paramiko.agent.AgentKey.__getattr__ = _safe_agentkey_getattr
 from config.infrastructure import (
     BPF_EGRESS, CLIENT_GROUPS, CLIENTS, EGRESS_ROUTER,
     INGRESS_ROUTER, MAX_CLOCK_DRIFT_MS, PROXY_MAP,
-    SNAPSHOT_LENGTH, TOR_CONTROL_PASSWORD, URL_BASE,
+    SNAPSHOT_LENGTH, TOR_CONTROL_PASSWORD, URL_BASE, WEB_SERVER,
     build_ingress_bpf,
 )
 
@@ -554,8 +554,20 @@ def check_infrastructure(mode: str,
     tshark_eg = ssh_run(egress_ssh, "which tshark 2>/dev/null || true", check=False)
     _check("tshark on egress", bool(tshark_eg), tshark_eg or "not found")
 
-    # Web server responding — curl run on egress router (shares 10.1.x.x subnet with server)
-    check_url = URL_BASE[mode] + "/page_html_1.html"
+    # Web server responding — curl run on egress router (shares 10.1.x.x subnet
+    # with server). Deliberately NOT URL_BASE[mode]: for tor/nym5/nym2,
+    # URL_BASE points at the egress router's OWN public IP (it's the address
+    # real visits hit from outside) — curling that from the egress router
+    # itself is a self/hairpin connection that fails outright on this
+    # infra (observed: curl exits non-zero before getting any response, so
+    # both the "-w" format string and the "|| echo 000" fallback fire,
+    # printing "000000" — never a real wrong-code failure). Checking the web
+    # server's private IP directly on the same port nginx actually listens on
+    # (see scripts/setup_webserver_ports.sh) tests the exact thing that
+    # matters — is nginx serving content on this mode's port — without
+    # depending on whether self-hairpin routing happens to work.
+    _WEBSERVER_PORT = {"vpn": 8080, "tor": 8081, "nym5": 8082, "nym2": 80}
+    check_url = f"http://{WEB_SERVER['private_ip']}:{_WEBSERVER_PORT[mode]}/page_html_1.html"
     http_code = ssh_run(
         egress_ssh,
         f"curl -s -o /dev/null -w '%{{http_code}}' {check_url} 2>/dev/null || echo 000",

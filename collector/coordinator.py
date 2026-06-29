@@ -53,9 +53,27 @@ from config.infrastructure import (
     SNAPSHOT_LENGTH, TOR_CONTROL_PASSWORD, URL_BASE, WEB_SERVER,
     build_ingress_bpf,
 )
+from config.hyperparams import VISIT_TIMEOUTS
 
 
 # ── SSH helpers ───────────────────────────────────────────────────────────────
+#
+# A FULL VM HANG (kernel stops servicing the socket, no RST/FIN ever arrives)
+# is invisible to paramiko unless every blocking call carries an explicit
+# bound. exec_command(timeout=None) — the default, and what every call below
+# used before this was diagnosed — opens its channel via
+# Transport.open_session(timeout=None), which falls back to
+# Transport.channel_timeout (default 3600s), and then does chan.settimeout
+# (None) for the read/write phase, which DISABLES the timeout entirely. A
+# hung VM therefore blocks a coordinator with no exception ever raised, which
+# is why wedge recovery (keyed on catching an exception) never fired during
+# the live nym2/nym5 hangs. CHANNEL_OPEN_TIMEOUT_S is set once at connect
+# time so it also backstops open_sftp() (used by scp_get), which has no
+# timeout parameter of its own to override the 3600s default.
+CHANNEL_OPEN_TIMEOUT_S      = 20    # bounds opening any new channel on this connection
+DEFAULT_SSH_EXEC_TIMEOUT_S  = 30    # bounds short administrative commands via ssh_run()
+SCP_TIMEOUT_S               = 60    # bounds the pcap-pull data-transfer phase
+
 
 def ssh_connect(host_cfg: dict) -> paramiko.SSHClient:
     """Opens and returns an authenticated SSHClient for a host config dict."""
@@ -67,6 +85,9 @@ def ssh_connect(host_cfg: dict) -> paramiko.SSHClient:
         username=host_cfg["user"],
         key_filename=str(Path(key_path).expanduser()),
         timeout=15,
+        banner_timeout=20,
+        auth_timeout=20,
+        channel_timeout=CHANNEL_OPEN_TIMEOUT_S,
     )
     return client
 
@@ -87,15 +108,35 @@ def retry_ssh_connect(host_cfg: dict, max_retries: int = 5, delay: int = 15) -> 
     ) from last_exc
 
 
-def ssh_run(client: paramiko.SSHClient, cmd: str, check=True) -> str:
+def ssh_run(client: paramiko.SSHClient, cmd: str, check=True,
+            timeout: float = DEFAULT_SSH_EXEC_TIMEOUT_S) -> str:
     """
     Runs a command on the remote host and returns stdout as a string.
     If check=True, raises RuntimeError on non-zero exit code.
+
+    timeout bounds the channel-open AND the read phase (paramiko forwards it
+    to chan.settimeout(), which Channel.recv()/.read() honor) — a hung VM
+    raises socket.timeout/SSHException within `timeout` seconds instead of
+    blocking indefinitely. Callers whose remote command can legitimately run
+    longer than the default (e.g. trigger_visit's browser/curl visit) must
+    pass an explicit larger value.
+
+    recv_exit_status() is called AFTER draining stdout/stderr, not before —
+    it has no timeout parameter at all in this paramiko version (raw
+    Event.wait(), unbounded) and is also paramiko's own documented advice
+    (avoids a window-size deadlock). Calling it first — as this used to —
+    means a hung VM blocks forever right there, completely ignoring the
+    `timeout` passed to exec_command: confirmed live, on the wire, against a
+    real powered-off VM, while validating this fix.
     """
-    _, stdout, stderr = client.exec_command(cmd)
-    exit_code = stdout.channel.recv_exit_status()
+    _, stdout, stderr = client.exec_command(cmd, timeout=timeout)
     out = stdout.read().decode().strip()
     err = stderr.read().decode().strip()
+    if not stdout.channel.status_event.wait(timeout):
+        raise TimeoutError(
+            f"command timed out waiting {timeout}s for exit status: {cmd}"
+        )
+    exit_code = stdout.channel.exit_status
     if check and exit_code != 0:
         raise RuntimeError(
             f"Remote command failed (exit {exit_code}):\n"
@@ -109,6 +150,11 @@ def scp_get(client: paramiko.SSHClient, remote_path: str, local_path: Path):
     """Downloads a file from the remote host to local_path via SFTP."""
     local_path.parent.mkdir(parents=True, exist_ok=True)
     with client.open_sftp() as sftp:
+        # open_sftp() has no timeout parameter of its own — its internal
+        # channel-open falls back to the connection's channel_timeout
+        # (set at connect time). This bounds the actual data-transfer phase,
+        # which channel_timeout does not cover.
+        sftp.get_channel().settimeout(SCP_TIMEOUT_S)
         sftp.get(remote_path, str(local_path))
 
 
@@ -501,7 +547,12 @@ def trigger_visit(client_ssh, url: str, proxy: str | None,
         f"--mode {mode} "
         f"{proxy_arg}"
     )
-    out = ssh_run(client_ssh, cmd, check=False)
+    # visit_trigger.py bounds itself internally (playwright page.goto timeout
+    # / curl --max-time) to VISIT_TIMEOUTS[mode]["curl_s"] at most — the SSH
+    # layer must allow at least that long plus process/launch overhead, or a
+    # legitimately slow (but successful) visit gets misclassified as a hang.
+    visit_ssh_timeout = VISIT_TIMEOUTS.get(mode, VISIT_TIMEOUTS["vpn"])["curl_s"] + 60
+    out = ssh_run(client_ssh, cmd, check=False, timeout=visit_ssh_timeout)
     try:
         return json.loads(out)
     except json.JSONDecodeError:
@@ -751,6 +802,29 @@ class SOCKS5WedgeError(RuntimeError):
     error."""
 
 
+# ── VM-hang classification ──────────────────────────────────────────────────
+#
+# A full VM hang (kernel stops servicing the socket) now surfaces as a bounded
+# timeout exception instead of blocking forever (see ssh_run/ssh_connect
+# above). This is rarer and more severe than a routine soft wedge (which
+# fire_alert deliberately stays silent on when recovery succeeds — see the
+# "Threshold alerting" section), so for an unattended multi-day run it is
+# always logged to ALERTS.log, detection AND outcome, regardless of whether
+# recovery succeeds — that's the trail this run needs that didn't exist
+# before.
+_VM_HANG_REASON_MARKERS = (
+    "timed out",                 # socket.timeout str()
+    "Timeout opening channel",   # paramiko SSHException on a hung channel-open
+    "Connection timed out",
+    "No route to host",
+    "Connection refused",        # transient during a reboot, but reconnect-side
+)
+
+
+def is_vm_hang_reason(reason: str) -> bool:
+    return any(marker in reason for marker in _VM_HANG_REASON_MARKERS)
+
+
 def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool, str]:
     """
     Returns (healthy, reason). reason is "" when healthy, else a short
@@ -989,7 +1063,16 @@ def run_single_visit(url: str, mode: str,
                     bpf_in,
                     ingress_remote,
                 )
-            except RuntimeError as e:
+            except Exception as e:
+                # Was `except RuntimeError` only — a bounded-timeout
+                # exception (socket.timeout / SSHException) from ssh_run is
+                # neither, so it used to die silently inside this thread:
+                # the thread exits, join() returns normally, and the
+                # caller's err-box check below never fires. Router-side
+                # failures here are intentionally NOT routed into client
+                # wedge-recovery (rebooting the client VM doesn't fix a
+                # hung/misconfigured router) — they still just skip this
+                # visit, but now visibly instead of vanishing.
                 ingress_err_box[0] = e
 
         def start_egress():
@@ -1000,7 +1083,7 @@ def run_single_visit(url: str, mode: str,
                     bpf_out,
                     egress_remote,
                 )
-            except RuntimeError as e:
+            except Exception as e:
                 egress_err_box[0] = e
 
         t_in  = threading.Thread(target=start_ingress)
@@ -1055,11 +1138,22 @@ def run_single_visit(url: str, mode: str,
         time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
 
         # ── Stop captures ──────────────────────────────────────────────────
+        # Best-effort cleanup (router-side, not part of client wedge
+        # detection) — but an uncaught exception inside a Thread target
+        # dies silently (join() returns normally either way), so a bounded-
+        # timeout exception from a hung router would otherwise vanish
+        # without a trace. Catch and log instead of letting it disappear.
         def stop_ingress():
-            stop_remote_capture(ingress_ssh, ingress_pid)
+            try:
+                stop_remote_capture(ingress_ssh, ingress_pid)
+            except Exception as e:
+                print(f"  [warn] stop_remote_capture(ingress) failed: {e}")
 
         def stop_egress():
-            stop_remote_capture(egress_ssh, egress_pid)
+            try:
+                stop_remote_capture(egress_ssh, egress_pid)
+            except Exception as e:
+                print(f"  [warn] stop_remote_capture(egress) failed: {e}")
 
         s_in  = threading.Thread(target=stop_ingress)
         s_out = threading.Thread(target=stop_egress)
@@ -1297,8 +1391,23 @@ def run_dataset(url_list_path: str, mode: str,
                         except Exception as e:
                             wedge_reason = f"mid-visit exception: {e}"
 
+                    vm_hang = wedge_reason is not None and is_vm_hang_reason(wedge_reason)
                     print(f"  [wedge] {client_id}: {wedge_reason} "
-                          f"(attempt {visit_attempt}/{WEDGE_MAX_RECOVERY_ATTEMPTS + 1})")
+                          f"(attempt {visit_attempt}/{WEDGE_MAX_RECOVERY_ATTEMPTS + 1})"
+                          + ("  *** VM-HANG ***" if vm_hang else ""))
+                    if vm_hang:
+                        # Unlike routine soft wedges (silent on success — see
+                        # the "Threshold alerting" header comment), a full
+                        # VM hang is rare and severe enough that an
+                        # unattended multi-day run needs a trail of every
+                        # occurrence, not just failures.
+                        print(f"  [wedge] VM-hang detected on {client_id} ({mode}) "
+                              f"=> attempting recovery (reason: {wedge_reason})")
+                        fire_alert(
+                            output_dir,
+                            f"VM-hang detected on {client_id} ({mode}) => "
+                            f"attempting recovery (reason: {wedge_reason})",
+                        )
 
                     if visit_attempt > WEDGE_MAX_RECOVERY_ATTEMPTS:
                         print(f"  [wedge] {client_id}: giving up after "
@@ -1335,17 +1444,26 @@ def run_dataset(url_list_path: str, mode: str,
                         client_ssh = new_ssh
                         print(f"  [wedge] {client_id}: recovered via {method} — "
                               f"requeuing visit {visit_id}")
+                        if vm_hang:
+                            # Outcome trail for the VM-hang case specifically
+                            # — logged even on success, unlike routine wedges.
+                            fire_alert(
+                                output_dir,
+                                f"VM-hang on {client_id} ({mode}): recovery "
+                                f"SUCCEEDED via {method} — resuming visit {visit_id}",
+                            )
                     else:
                         print(f"  [wedge] {client_id}: recovery attempt failed "
                               f"({method}) — retrying")
                         # Alert condition 1: a recovery attempt that failed.
                         # A wedge that recovers cleanly must NOT alert — only
-                        # this branch (recovered=False) does.
+                        # this branch (recovered=False) does (VM-hang success
+                        # is the one exception, handled above).
                         fire_alert(
                             output_dir,
-                            f"{client_id} ({mode}): recovery attempt failed "
-                            f"(method={method}) for visit {visit_id} — "
-                            f"reason: {wedge_reason}",
+                            f"{'VM-hang on ' if vm_hang else ''}{client_id} ({mode}): "
+                            f"recovery attempt failed (method={method}) for visit "
+                            f"{visit_id} — reason: {wedge_reason}",
                         )
 
                 # ── Threshold alerts 2 & 3: evaluated once per completed visit

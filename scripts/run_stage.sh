@@ -95,24 +95,31 @@ mkdir -p "$OUTPUT"
 # A client unreachable at stage start used to crash the whole run with an
 # uncaught RuntimeError (coordinator.py's initial connect is deliberately
 # fail-fast — by design, for ad-hoc runs; the campaign launcher needs to be
-# the resilient layer on top). Detect, hcloud reboot, poll, then launch that
+# the resilient layer on top). Detect, hcloud reset, poll, then launch that
 # client. If it never comes back within budget, skip it for THIS stage only.
+#
+# Uses `reset` (hard power-cycle), not `reboot` (graceful ACPI signal) — a
+# fully hung VM's kernel cannot process an ACPI signal at all, so `reboot`
+# is a no-op against the actual failure mode this function exists for.
+# collector.coordinator.recover_wedged_client's hard tier already uses
+# `reset` for the same reason; confirmed live on the wire recovering a real
+# powered-off nym2-client2 (see ALERTS.log trail in that fix).
 ensure_client_reachable() {
     local client_id="$1" host="${CLIENT_IP[$1]}"
     if ssh $SSH_OPTS "root@$host" 'echo ok' >/dev/null 2>&1; then
         return 0
     fi
-    log "WARNING: $client_id ($host) unreachable — attempting hcloud reboot"
+    log "WARNING: $client_id ($host) unreachable — attempting hcloud reset"
     local hcloud; hcloud=$(command -v hcloud || echo "$HOME/bin/hcloud")
     [[ -x "$hcloud" ]] || { log "ERROR: hcloud CLI not found — cannot recover $client_id"; return 1; }
-    if ! "$hcloud" server reboot "$client_id" >/dev/null 2>&1; then
-        log "ERROR: hcloud reboot failed for $client_id"
+    if ! "$hcloud" server reset "$client_id" >/dev/null 2>&1; then
+        log "ERROR: hcloud reset failed for $client_id"
         return 1
     fi
     local deadline=$((SECONDS + CLIENT_HANG_POLL_TIMEOUT_S))
     while (( SECONDS < deadline )); do
         if ssh $SSH_OPTS "root@$host" 'echo ok' >/dev/null 2>&1; then
-            log "$client_id back up after reboot."
+            log "$client_id back up after reset."
             return 0
         fi
         sleep "$CLIENT_HANG_POLL_INTERVAL_S"

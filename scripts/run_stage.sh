@@ -170,11 +170,12 @@ is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VIS
 is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 
+launched_clients="${!PIDS[*]}"
 {
     echo "full_urls=$FULL_URLS"
     echo "light_urls=$LIGHT_URLS"
     echo "output=$OUTPUT"
-    echo "launched=${!PIDS[*]:-none}"
+    echo "launched=${launched_clients:-none}"
     echo "skipped=${SKIPPED[*]:-none}"
     for c in "${!PIDS[@]}"; do echo "pid_$c=${PIDS[$c]}"; done
 } > "$OUTPUT/stage_meta.txt"

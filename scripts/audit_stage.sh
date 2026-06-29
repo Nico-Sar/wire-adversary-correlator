@@ -36,15 +36,65 @@ declare -A CLIENT_PRIVATE_IP=(
     [nym2-client1]="10.0.0.4"  [nym2-client2]="10.0.0.6"
 )
 
+# ── 0. Launch sanity (tracebacks / module errors / process failures) ───────────
+# "Collected nothing" must be a hard fail, not silently skipped — a crashed
+# coordinator (e.g. ModuleNotFoundError under the wrong interpreter) produces
+# no visit log at all, which the old per-mode-yield check let through as
+# "no log found" / "0 visits" without ever flagging.
+echo ""
+echo "--- 0. Launch sanity (tracebacks / module errors / process failures) ---"
+META_FILE="$STAGE_DIR/stage_meta.txt"
+FULL_URLS_VAL="NONE"; LIGHT_URLS_VAL="NONE"; FAILED_LIST=""
+if [[ -f "$META_FILE" ]]; then
+    FULL_URLS_VAL=$(grep '^full_urls=' "$META_FILE" | cut -d= -f2-)
+    LIGHT_URLS_VAL=$(grep '^light_urls=' "$META_FILE" | cut -d= -f2-)
+    FAILED_LIST=$(grep '^failed=' "$META_FILE" | cut -d= -f2-)
+    if [[ -n "$FAILED_LIST" && "$FAILED_LIST" != "none" ]]; then
+        flag "coordinator process(es) exited non-zero: $FAILED_LIST"
+    fi
+else
+    flag "no stage_meta.txt found in $STAGE_DIR — run_stage.sh did not record a launch; cannot verify what (if anything) ran"
+fi
+for log in "$STAGE_DIR"/log_*.txt; do
+    [[ -f "$log" ]] || continue
+    client_id=$(basename "$log" .txt); client_id="${client_id#log_}"
+    if grep -qE 'Traceback \(most recent call last\)|ModuleNotFoundError' "$log"; then
+        flag "$client_id: log contains a Python traceback / ModuleNotFoundError — $(basename "$log")"
+    fi
+done
+[[ "$RED_FLAG" -eq 0 ]] && ok "no tracebacks/module errors/process failures detected"
+
+mode_expected() {
+    case "$1" in
+        vpn|tor)   [[ "$FULL_URLS_VAL" != "NONE" && -n "$FULL_URLS_VAL" ]] ;;
+        nym5|nym2) [[ "$LIGHT_URLS_VAL" != "NONE" && -n "$LIGHT_URLS_VAL" ]] ;;
+        *) return 1 ;;
+    esac
+}
+
 # ── 1. Per-mode yield ───────────────────────────────────────────────────────────
 echo ""
 echo "--- 1. Per-mode yield ---"
 for mode in vpn tor nym5 nym2; do
     f="$STAGE_DIR/${mode}_visits.jsonl"
-    [[ -f "$f" ]] || { echo "  $mode: no log found"; continue; }
+    if ! mode_expected "$mode"; then
+        echo "  $mode: not active this round — skipped"
+        continue
+    fi
+    if [[ ! -f "$f" ]]; then
+        flag "$mode: expected to run this round but no visit log found ($f) — zero collection"
+        continue
+    fi
     total=$(wc -l < "$f")
     success=$(grep -c '"visit_status": "success"' "$f" || true)
-    [[ "$total" -gt 0 ]] || { echo "  $mode: 0 visits"; continue; }
+    if [[ "$total" -eq 0 ]]; then
+        flag "$mode: expected to run this round but 0 visits recorded — zero collection"
+        continue
+    fi
+    if [[ "$success" -eq 0 ]]; then
+        flag "$mode: expected to run this round but 0 successful visits ($total attempted) — zero collection"
+        continue
+    fi
     yield=$(awk -v s="$success" -v t="$total" 'BEGIN{printf "%.3f", s/t}')
     pct=$(awk -v y="$yield" 'BEGIN{printf "%.1f", y*100}')
     if awk -v y="$yield" -v th="$YIELD_THRESHOLD" 'BEGIN{exit !(y<th)}'; then
@@ -172,7 +222,6 @@ fi
 # ── 6. Budget tracker ────────────────────────────────────────────────────────────
 echo ""
 echo "--- 6. Budget tracker ---"
-STAGE_META="$STAGE_DIR/stage_meta.txt"
 python3 -c "
 import json, glob, os, sys
 from datetime import datetime, date

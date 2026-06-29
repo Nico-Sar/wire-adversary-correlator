@@ -45,8 +45,16 @@ EGRESS_IP="204.168.189.97"
 CLIENT_HANG_POLL_TIMEOUT_S=240
 CLIENT_HANG_POLL_INTERVAL_S=10
 
+# collector.coordinator needs the project venv (paramiko etc.) — system
+# python3 has none of that and crashes instantly with ModuleNotFoundError.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COORDINATOR_PYTHON="${COORDINATOR_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
+
 log() { echo "[$(date '+%H:%M:%S')] [$LABEL] $*"; }
 die() { echo "[$(date '+%H:%M:%S')] [$LABEL] [ERROR] $*" >&2; exit 1; }
+
+[[ -x "$COORDINATOR_PYTHON" ]] \
+    || die "venv python not found/executable: $COORDINATOR_PYTHON — collector.coordinator requires the project venv (paramiko, etc.), not system python3"
 
 declare -A CLIENT_IP=(
     [vpn-client1]="204.168.205.5"     [vpn-client2]="204.168.184.39"
@@ -144,7 +152,7 @@ DROP_MONITOR_PID=$!
 declare -A PIDS
 launch_client() {
     local client_id="$1" mode="$2" urls="$3" visits="$4"; shift 4
-    python3 -m collector.coordinator --mode "$mode" --urls "$urls" \
+    "$COORDINATOR_PYTHON" -m collector.coordinator --mode "$mode" --urls "$urls" \
         --visits "$visits" --output "$OUTPUT" --client "$client_id" "$@" \
         > "$OUTPUT/log_${client_id}.txt" 2>&1 &
     PIDS[$client_id]=$!
@@ -179,6 +187,8 @@ for client_id in "${!PIDS[@]}"; do
         FAILED_CLIENTS+=("$client_id")
     fi
 done
+
+echo "failed=${FAILED_CLIENTS[*]:-none}" >> "$OUTPUT/stage_meta.txt"
 
 kill "$DROP_MONITOR_PID" 2>/dev/null || true
 

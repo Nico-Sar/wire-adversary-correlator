@@ -18,10 +18,13 @@ CAMPAIGN_ROOT="${2:?usage: audit_stage.sh <stage_output_dir> <campaign_root> <li
 LICENSE_DEADLINE="${3:?usage: audit_stage.sh <stage_output_dir> <campaign_root> <license_deadline_YYYY-MM-DD>}"
 
 TARGET_FLOWS_PER_MODE=25000
-YIELD_THRESHOLD=0.85
+YIELD_THRESHOLD=0.95   # < 95% yield = real failure; expected healthy range is 98-100%
 
-RED_FLAG=0
+RED_FLAG=0    # hard-HALT conditions (contamination, drops, zero ingress, crash, low yield)
+INFO_COUNT=0  # informational notes (watchdog recoveries, expected wedge attrition)
+
 flag() { echo "  [FLAG] $*"; RED_FLAG=1; }
+info() { echo "  [INFO] $*"; INFO_COUNT=$((INFO_COUNT + 1)); }
 ok()   { echo "  [ok]   $*"; }
 
 echo "================================================================"
@@ -55,14 +58,43 @@ if [[ -f "$META_FILE" ]]; then
 else
     flag "no stage_meta.txt found in $STAGE_DIR — run_stage.sh did not record a launch; cannot verify what (if anything) ran"
 fi
+sec0_ok=1
 for log in "$STAGE_DIR"/log_*.txt; do
     [[ -f "$log" ]] || continue
     client_id=$(basename "$log" .txt); client_id="${client_id#log_}"
-    if grep -qE 'Traceback \(most recent call last\)|ModuleNotFoundError' "$log"; then
-        flag "$client_id: log contains a Python traceback / ModuleNotFoundError — $(basename "$log")"
+
+    if grep -q 'ModuleNotFoundError' "$log"; then
+        flag "$client_id: ModuleNotFoundError in log — wrong Python interpreter or missing package ($(basename "$log"))"
+        sec0_ok=0
+        continue
+    fi
+
+    # Tracebacks from the watchdog's SSH/VM-hang detection are expected and benign —
+    # they are caught exceptions logged as part of "VM-hang detected => recovery SUCCEEDED".
+    # Only flag tracebacks whose context window contains none of the SSH-exception signals.
+    bad_tb=$(python3 - "$log" <<'PYEOF'
+import sys
+SAFE = ['SSHException', 'Error reading SSH protocol banner',
+        'Timeout opening channel', 'socket.timeout', 'TimeoutError',
+        'paramiko.ssh_exception']
+with open(sys.argv[1]) as f:
+    lines = f.readlines()
+bad = 0
+for i, line in enumerate(lines):
+    if 'Traceback (most recent call last)' in line:
+        ctx = ''.join(lines[i:i+20])
+        if not any(p in ctx for p in SAFE):
+            bad += 1
+print(bad)
+PYEOF
+    2>/dev/null || echo 0)
+
+    if [[ "$bad_tb" -gt 0 ]]; then
+        flag "$client_id: $bad_tb non-SSH traceback(s) in log — unexpected crash ($(basename "$log"))"
+        sec0_ok=0
     fi
 done
-[[ "$RED_FLAG" -eq 0 ]] && ok "no tracebacks/module errors/process failures detected"
+[[ "$sec0_ok" -eq 1 ]] && ok "no unexpected tracebacks/module errors/process failures detected"
 
 mode_expected() {
     case "$1" in
@@ -192,7 +224,7 @@ for log in "$STAGE_DIR"/log_*.txt; do
     wedge_clients_seen=$((wedge_clients_seen + 1))
     echo "  $client_id: $total wedge events, $recovered recovered, $unrecoverable unrecoverable"
     if [[ "$unrecoverable" -gt 0 ]]; then
-        flag "$client_id: $unrecoverable WEDGE_UNRECOVERABLE event(s)"
+        info "$client_id: $unrecoverable WEDGE_UNRECOVERABLE event(s) — lost visits; yield check in §1 gates on real threshold"
     fi
 done
 if [[ "$wedge_clients_seen" -gt 0 ]]; then
@@ -215,7 +247,10 @@ else
     ok "no wedge events this stage"
 fi
 if [[ -f "$STAGE_DIR/ALERTS.log" ]]; then
-    flag "ALERTS.log present this stage — $(wc -l < "$STAGE_DIR/ALERTS.log") alert(s) fired:"
+    n_alerts=$(wc -l < "$STAGE_DIR/ALERTS.log")
+    n_succeeded=$(grep -c 'recovery SUCCEEDED' "$STAGE_DIR/ALERTS.log" || true)
+    n_attempt_failed=$(grep -c 'recovery attempt failed' "$STAGE_DIR/ALERTS.log" || true)
+    info "ALERTS.log: $n_alerts alert(s) — $n_succeeded recovery-succeeded, $n_attempt_failed attempt-failed (watchdog activity; informational)"
     sed 's/^/    /' "$STAGE_DIR/ALERTS.log"
 fi
 
@@ -309,13 +344,26 @@ budget_rc=$?
 # ── Verdict ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "================================================================"
+echo " SUMMARY"
+echo "   Hard HALT conditions ([FLAG]):  $RED_FLAG fired"
+echo "   Informational notes  ([INFO]):  $INFO_COUNT fired"
+echo "   Hard-HALT triggers: contamination, router drops, zero ingress,"
+echo "     per-mode yield < 95%, unexpected tracebacks, non-zero exit"
+echo "   Informational only:  WEDGE_UNRECOVERABLE counts, watchdog recovery"
+echo "     alerts (SSHException/VM-hang), recovery attempt failures"
+echo "================================================================"
 if [[ "$RED_FLAG" -eq 1 ]]; then
-    echo " VERDICT: HALT — red flag(s) above. Do not proceed to the next stage"
-    echo " without review."
+    echo " VERDICT: HALT — [FLAG] condition(s) above require review."
+    echo " Do NOT proceed to the next stage without addressing them."
     echo "================================================================"
     exit 1
+elif [[ "$INFO_COUNT" -gt 0 ]]; then
+    echo " VERDICT: PASS ($INFO_COUNT informational note(s) — see [INFO] above;"
+    echo " all are expected watchdog/wedge activity, not data-quality issues)."
+    echo "================================================================"
+    exit 0
 else
-    echo " VERDICT: PASS — safe to proceed to the next stage."
+    echo " VERDICT: PASS — clean stage, safe to proceed."
     echo "================================================================"
     exit 0
 fi

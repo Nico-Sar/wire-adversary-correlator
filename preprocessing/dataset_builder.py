@@ -168,7 +168,7 @@ def build_dataset(labels_jsonl: str,
         # stream, which misleads training with corrupted positive pairs.
         # Exception: egress-only modes (e.g. nym5) have no ingress traffic by
         # design — their ingress streams are always zero and must not be checked.
-        min_pkts_per_stream = KDE["min_packets"]  # 5, from config/hyperparams.py
+        min_pkts_per_stream = mode_kde.get("min_packets", KDE["min_packets"])
         stream_counts = {
             "ingress_up":   quartet["n_ingress_up"],
             "ingress_down": quartet["n_ingress_down"],

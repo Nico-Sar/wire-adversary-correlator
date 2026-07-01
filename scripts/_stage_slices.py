@@ -3,7 +3,10 @@
 scripts/_stage_slices.py
 =========================
 Internal helper for scripts/run_campaign.sh. Per-mode URL design:
-  - vpn/tor  collect against the FULL validated URL list (e.g. 500).
+  - vpn    collects against the FULL validated URL list (e.g. 500).
+  - tor    collects against the FULL list MINUS .zip URLs. Large zip downloads
+           fail/stall over Tor's limited bandwidth, producing junk flows that
+           log as "success" with <50 ingress packets. vpn handles zips fine.
   - nym5/nym2 collect against a LIGHTER subset (e.g. the 265 html+json URLs
     — heavy mp3/mp4/pdf/zip are too slow/timeout-prone through nym5's 5-hop
     path). The light list is a STRICT SUBSET of the full list.
@@ -34,9 +37,11 @@ Usage:
     python3 scripts/_stage_slices.py <full_urls.txt> <light_urls.txt> <output_dir> [stage_size]
 
 Writes:
-    <output_dir>/full/stage_NN.txt   (vpn/tor)
+    <output_dir>/full/stage_NN.txt   (vpn — full list)
+    <output_dir>/tor/stage_NN.txt    (tor — full list minus .zip; same index as full,
+                                       absent when a full stage is entirely .zip → NONE)
     <output_dir>/light/stage_NN.txt  (nym5/nym2)
-    <output_dir>/stage_manifest.txt  (both grids, split per stage, URL counts)
+    <output_dir>/stage_manifest.txt  (all grids, split per stage, URL counts)
     <output_dir>/split_consistency_check.txt (every shared URL's split label
                                                from both views, confirming agreement)
 """
@@ -113,6 +118,33 @@ def write_stage_grid(urls: list[str], global_split: dict[str, str],
     return stage_num
 
 
+def write_tor_grid(full_out_dir: Path, tor_out_dir: Path,
+                   manifest_lines: list[str]) -> tuple[int, int]:
+    """
+    Tor grid: mirror the full stage index but strip .zip URLs from each stage.
+    Stage files that become empty after filtering are NOT written — the campaign
+    runner treats a missing tor/stage_NN.txt as NONE (tor doesn't run that round).
+    Returns (n_written_stages, n_total_tor_urls).
+    """
+    tor_out_dir.mkdir(parents=True, exist_ok=True)
+    n_written = 0
+    n_total = 0
+    for full_stage in sorted(full_out_dir.glob("stage_*.txt")):
+        urls = [l for l in full_stage.read_text().splitlines() if l.strip()]
+        tor_urls = [u for u in urls if not u.lower().endswith(".zip")]
+        removed = len(urls) - len(tor_urls)
+        if not tor_urls:
+            print(f"  tor/{full_stage.name}: 0 URLs after .zip filter ({removed} removed) — stage absent (NONE)")
+            continue
+        (tor_out_dir / full_stage.name).write_text("\n".join(tor_urls) + "\n")
+        n_written += 1
+        n_total += len(tor_urls)
+        suffix = f" ({removed} .zip removed)" if removed else ""
+        print(f"  tor/{full_stage.name}: {len(tor_urls)} URLs{suffix}")
+        manifest_lines.append(f"tor\t{full_stage.name}\t(zip-filtered)\t{len(tor_urls)}")
+    return n_written, n_total
+
+
 def write_consistency_check(full_urls: set[str], light_urls: set[str],
                              global_split: dict[str, str], out_path: Path) -> None:
     """
@@ -161,9 +193,13 @@ def main():
         print(f"  {name}: {n} URLs")
 
     manifest_lines = []
-    print("\nFull-list stages (vpn/tor):")
+    print("\nFull-list stages (vpn):")
     n_full = write_stage_grid(full_urls, global_split, out_dir / "full", stage_size,
                                "full", manifest_lines)
+    print("\nTor-list stages (tor, full-minus-zip):")
+    n_tor, n_tor_urls = write_tor_grid(out_dir / "full", out_dir / "tor", manifest_lines)
+    n_zip_removed = len(set(full_urls)) - n_tor_urls
+    print(f"  {n_tor} stages written ({n_zip_removed} .zip URL(s) excluded from tor collection)")
     print("\nLight-list stages (nym5/nym2):")
     n_light = write_stage_grid(light_urls, global_split, out_dir / "light", stage_size,
                                 "light", manifest_lines)
@@ -172,9 +208,11 @@ def main():
     write_consistency_check(set(full_urls), set(light_urls), global_split,
                              out_dir / "split_consistency_check.txt")
 
-    print(f"\nFull list: {n_full} stages. Light list: {n_light} stages.")
-    print("These are INDEPENDENT grids — light stage N is not the same URLs as")
-    print("full stage N. run_campaign.sh advances each grid at its own pace.")
+    print(f"\nFull list (vpn): {n_full} stages. Tor list (full-minus-zip): {n_tor} stages. "
+          f"Light list (nym5/nym2): {n_light} stages.")
+    print("Full and tor share the same stage index — tor/stage_NN covers the same URL batch")
+    print("as full/stage_NN minus .zip entries. Missing tor stages → NONE (no tor that round).")
+    print("Light list is an independent grid — stage N is not the same URLs as full/tor stage N.")
     print(f"Manifest: {out_dir / 'stage_manifest.txt'}")
     print(f"Split consistency proof: {out_dir / 'split_consistency_check.txt'}")
 

@@ -55,14 +55,15 @@ ssh-add -l 2>/dev/null | grep -qi "nico-thesis\|nicolas-thesis" \
 export VISITS_LIGHT
 log "VISITS_LIGHT=$VISITS_LIGHT (nym5/nym2 visits/client/URL)"
 
-log "Building split-consistent stage grids (full + light) from validated lists..."
+log "Building split-consistent stage grids (full + tor + light) from validated lists..."
 python3 scripts/_stage_slices.py "$VALIDATED_FULL" "$VALIDATED_LIGHT" "$SLICE_DIR" 50
 
 n_full=$(find "$SLICE_DIR/full"  -maxdepth 1 -name 'stage_*.txt' 2>/dev/null | wc -l)
+n_tor=$(find  "$SLICE_DIR/tor"   -maxdepth 1 -name 'stage_*.txt' 2>/dev/null | wc -l)
 n_light=$(find "$SLICE_DIR/light" -maxdepth 1 -name 'stage_*.txt' 2>/dev/null | wc -l)
 n_rounds=$(( n_full > n_light ? n_full : n_light ))
-log "Full-list stages: $n_full. Light-list stages: $n_light. Total rounds: $n_rounds"
-log "(full and light stage N are NOT the same URLs — see split_consistency_check.txt)"
+log "Full-list (vpn) stages: $n_full. Tor (full-minus-zip) stages: $n_tor. Light (nym5/nym2) stages: $n_light. Total rounds: $n_rounds"
+log "(full/tor share stage index; missing tor/stage_NN → tor=NONE that round. light is independent.)"
 
 for round in $(seq -w 1 "$n_rounds"); do
     if (( 10#$round < START_ROUND )); then
@@ -77,20 +78,22 @@ for round in $(seq -w 1 "$n_rounds"); do
     fi
 
     full_stage="$SLICE_DIR/full/stage_${round}.txt"
+    tor_stage="$SLICE_DIR/tor/stage_${round}.txt"
     light_stage="$SLICE_DIR/light/stage_${round}.txt"
-    [[ -f "$full_stage" ]]  || full_stage="NONE"
-    [[ -f "$light_stage" ]] || light_stage="NONE"
+    [[ -f "$full_stage" ]]                    || full_stage="NONE"
+    [[ -f "$tor_stage" && -s "$tor_stage" ]]  || tor_stage="NONE"
+    [[ -f "$light_stage" ]]                   || light_stage="NONE"
 
-    if [[ "$full_stage" == "NONE" && "$light_stage" == "NONE" ]]; then
-        log "Round $round: both grids exhausted, nothing to do — should not happen (n_rounds miscount?)"
+    if [[ "$full_stage" == "NONE" && "$tor_stage" == "NONE" && "$light_stage" == "NONE" ]]; then
+        log "Round $round: all grids exhausted, nothing to do — should not happen (n_rounds miscount?)"
         continue
     fi
 
     log "=========================================================="
-    log "ROUND $round / $n_rounds — full=$full_stage light=$light_stage"
+    log "ROUND $round / $n_rounds — vpn=$full_stage tor=$tor_stage light=$light_stage"
     log "=========================================================="
 
-    if ! bash scripts/run_stage.sh "$full_stage" "$light_stage" "$round_out" "round_$round"; then
+    if ! TOR_URLS="$tor_stage" bash scripts/run_stage.sh "$full_stage" "$light_stage" "$round_out" "round_$round"; then
         die "round $round could not be launched at all (see output above) — campaign halted"
     fi
 

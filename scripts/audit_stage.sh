@@ -47,10 +47,13 @@ declare -A CLIENT_PRIVATE_IP=(
 echo ""
 echo "--- 0. Launch sanity (tracebacks / module errors / process failures) ---"
 META_FILE="$STAGE_DIR/stage_meta.txt"
-FULL_URLS_VAL="NONE"; LIGHT_URLS_VAL="NONE"; FAILED_LIST=""
+FULL_URLS_VAL="NONE"; TOR_URLS_VAL="NONE"; LIGHT_URLS_VAL="NONE"; FAILED_LIST=""
 if [[ -f "$META_FILE" ]]; then
     FULL_URLS_VAL=$(grep '^full_urls=' "$META_FILE" | cut -d= -f2-)
+    TOR_URLS_VAL=$(grep '^tor_urls=' "$META_FILE" | cut -d= -f2-)
     LIGHT_URLS_VAL=$(grep '^light_urls=' "$META_FILE" | cut -d= -f2-)
+    # backward compat: old stage_meta.txt has no tor_urls line (pre-zip-filter)
+    [[ -n "$TOR_URLS_VAL" ]] || TOR_URLS_VAL="$FULL_URLS_VAL"
     FAILED_LIST=$(grep '^failed=' "$META_FILE" | cut -d= -f2-)
     if [[ -n "$FAILED_LIST" && "$FAILED_LIST" != "none" ]]; then
         flag "coordinator process(es) exited non-zero: $FAILED_LIST"
@@ -98,7 +101,8 @@ done
 
 mode_expected() {
     case "$1" in
-        vpn|tor)   [[ "$FULL_URLS_VAL" != "NONE" && -n "$FULL_URLS_VAL" ]] ;;
+        vpn)       [[ "$FULL_URLS_VAL" != "NONE" && -n "$FULL_URLS_VAL" ]] ;;
+        tor)       [[ "$TOR_URLS_VAL"  != "NONE" && -n "$TOR_URLS_VAL"  ]] ;;
         nym5|nym2) [[ "$LIGHT_URLS_VAL" != "NONE" && -n "$LIGHT_URLS_VAL" ]] ;;
         *) return 1 ;;
     esac

@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # scripts/run_stage.sh
 # =====================
-# Runs ONE step of the nym campaign's two independent stage grids: vpn/tor
-# against a full-list stage, nym5/nym2 against a light-list stage — these
-# are NOT the same URLs and advance at different paces (see
-# scripts/_stage_slices.py), so either argument can be "NONE" if that grid
-# has no stage active this round (e.g. light grid exhausted before full grid).
-# Whichever modes ARE active launch concurrently (collect_quick_test.sh
-# pattern — backgrounded, one wait, each client -> its own logfile, shared
-# output dir).
+# Runs ONE step of the nym campaign's stage grids: vpn against a full-list
+# stage, tor against a tor-list stage (full-minus-zip — large zips stall over
+# Tor bandwidth, producing junk flows), nym5/nym2 against a light-list stage.
+# The full and tor grids share the same stage index but tor may be absent for
+# rounds whose full-list stage was entirely .zip URLs (run_campaign.sh passes
+# NONE for tor in that case). Either full/tor/light argument can be "NONE".
+# All active modes launch concurrently (backgrounded, one wait, each client
+# -> its own logfile, shared output dir).
 #
 # Locked parameters:
-#   vpn/tor:   --visits 25/client/URL (--rotate-circuits every visit)
+#   vpn:       --visits 25/client/URL
+#   tor:       --visits 25/client/URL --rotate-circuits (from TOR_URLS env var
+#              or falls back to FULL_URLS if TOR_URLS not set)
 #   nym5/nym2: --rotate-circuits --rotate-every 3. Visits/client/URL is NOT
 #              hardcoded — set VISITS_LIGHT explicitly (env var) before
 #              calling this script. There is no safe default: 25 (matching
@@ -23,6 +25,7 @@
 #
 # Usage:
 #   bash scripts/run_stage.sh <full_urls_file|NONE> <light_urls_file|NONE> <output_dir> [label]
+#   TOR_URLS=<tor_stage_file|NONE> bash scripts/run_stage.sh ...  (set by run_campaign.sh)
 #
 # Exit code: 0 if all launched client processes completed (their own
 # visit_status may still include errors/wedges — audit_stage.sh's job).
@@ -37,6 +40,9 @@ LABEL="${4:-stage}"
 
 VISITS_FULL=25
 VISITS_LIGHT="${VISITS_LIGHT:-}"   # no safe default — see header comment
+# Tor uses a zip-filtered URL list (set by run_campaign.sh); falls back to
+# FULL_URLS when called without this env var (backward compat, manual runs).
+TOR_URLS="${TOR_URLS:-$FULL_URLS}"
 ROTATE_EVERY_NYM=3
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/nico-thesis}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
@@ -64,12 +70,18 @@ declare -A CLIENT_IP=(
 )
 
 # ── 0. Pre-flight ──────────────────────────────────────────────────────────────
-RUN_FULL=0; RUN_LIGHT=0
+RUN_FULL=0; RUN_TOR=0; RUN_LIGHT=0
 if [[ "$FULL_URLS" != "NONE" ]]; then
     [[ -f "$FULL_URLS" ]] || die "full URLs file not found: $FULL_URLS"
     bad=$(grep -nE '^[[:space:]]*https?://' "$FULL_URLS" || true)
     [[ -z "$bad" ]] || die "$FULL_URLS contains full URLs, not bare paths:\n$bad"
     RUN_FULL=1
+fi
+if [[ "$TOR_URLS" != "NONE" ]]; then
+    [[ -f "$TOR_URLS" ]] || die "tor URLs file not found: $TOR_URLS"
+    bad=$(grep -nE '^[[:space:]]*https?://' "$TOR_URLS" || true)
+    [[ -z "$bad" ]] || die "$TOR_URLS contains full URLs, not bare paths:\n$bad"
+    RUN_TOR=1
 fi
 if [[ "$LIGHT_URLS" != "NONE" ]]; then
     [[ -f "$LIGHT_URLS" ]] || die "light URLs file not found: $LIGHT_URLS"
@@ -78,7 +90,7 @@ if [[ "$LIGHT_URLS" != "NONE" ]]; then
     RUN_LIGHT=1
     [[ -n "$VISITS_LIGHT" ]] || die "VISITS_LIGHT is not set and a light-list stage is active. Decide visits/URL for nym5/nym2 first — see docs/CAMPAIGN_RUNBOOK.md 'Light-list visits/URL decision'. Example: VISITS_LIGHT=48 bash scripts/run_stage.sh ..."
 fi
-(( RUN_FULL || RUN_LIGHT )) || die "both FULL_URLS and LIGHT_URLS are NONE — nothing to run"
+(( RUN_FULL || RUN_TOR || RUN_LIGHT )) || die "FULL_URLS, TOR_URLS, and LIGHT_URLS are all NONE — nothing to run"
 
 log "Checking ssh-agent has the campaign key loaded..."
 ssh-add -l 2>/dev/null | grep -qi "nico-thesis\|nicolas-thesis" \
@@ -129,7 +141,8 @@ ensure_client_reachable() {
 }
 
 CANDIDATES=()
-(( RUN_FULL ))  && CANDIDATES+=(vpn-client1 vpn-client2 tor-client1 tor-client2)
+(( RUN_FULL ))  && CANDIDATES+=(vpn-client1 vpn-client2)
+(( RUN_TOR ))   && CANDIDATES+=(tor-client1 tor-client2)
 (( RUN_LIGHT )) && CANDIDATES+=(nym5-client1 nym5-client2 nym2-client1 nym2-client2)
 
 REACHABLE=()
@@ -167,11 +180,11 @@ launch_client() {
 
 is_reachable() { printf '%s\n' "${REACHABLE[@]}" | grep -qx "$1"; }
 
-log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- full=$RUN_FULL light=$RUN_LIGHT"
-is_reachable vpn-client1  && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL"
-is_reachable vpn-client2  && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL"
-is_reachable tor-client1  && launch_client tor-client1  tor  "$FULL_URLS" "$VISITS_FULL" --rotate-circuits
-is_reachable tor-client2  && launch_client tor-client2  tor  "$FULL_URLS" "$VISITS_FULL" --rotate-circuits
+log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- vpn=$RUN_FULL tor=$RUN_TOR light=$RUN_LIGHT"
+is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL"
+is_reachable vpn-client2  && (( RUN_FULL )) && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL"
+is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
+is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
 is_reachable nym5-client1 && launch_client nym5-client1 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
@@ -180,6 +193,7 @@ is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VIS
 launched_clients="${!PIDS[*]}"
 {
     echo "full_urls=$FULL_URLS"
+    echo "tor_urls=$TOR_URLS"
     echo "light_urls=$LIGHT_URLS"
     echo "output=$OUTPUT"
     echo "launched=${launched_clients:-none}"

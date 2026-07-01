@@ -275,8 +275,10 @@ target = $TARGET_FLOWS_PER_MODE
 status_overall = 'ON TRACK'
 
 for mode in ('vpn', 'tor', 'nym5', 'nym2'):
-    # Cumulative successes across ALL stage dirs in campaign_root so far.
+    # Cumulative primary successes across ALL stage dirs. Backfill visits are
+    # excluded from the target count (they are bonus data, not campaign budget).
     cumulative = 0
+    backfill_cumulative = 0
     for f in sorted(glob.glob(os.path.join(campaign_root, '*', f'{mode}_visits.jsonl'))):
         with open(f) as fh:
             for line in fh:
@@ -287,9 +289,12 @@ for mode in ('vpn', 'tor', 'nym5', 'nym2'):
                 except Exception:
                     continue
                 if r.get('visit_status') == 'success':
-                    cumulative += 1
+                    if r.get('backfill', False):
+                        backfill_cumulative += 1
+                    else:
+                        cumulative += 1
 
-    # This stage's own rate: successes / stage wall-clock.
+    # This stage's own primary rate: successes / stage wall-clock (backfill excluded).
     this_stage_file = os.path.join(stage_dir, f'{mode}_visits.jsonl')
     this_success = 0
     timestamps = []
@@ -302,23 +307,24 @@ for mode in ('vpn', 'tor', 'nym5', 'nym2'):
                     r = json.loads(line)
                 except Exception:
                     continue
-                if r.get('visit_status') == 'success':
+                if r.get('visit_status') == 'success' and not r.get('backfill', False):
                     this_success += 1
-                if 't_capture_start' in r:
+                if 't_capture_start' in r and not r.get('backfill', False):
                     timestamps.append(r['t_capture_start'])
-                if 't_capture_end' in r:
+                if 't_capture_end' in r and not r.get('backfill', False):
                     timestamps.append(r['t_capture_end'])
 
+    bf_suffix = f'  backfill={backfill_cumulative}' if backfill_cumulative else ''
     remaining = max(0, target - cumulative)
     if not timestamps or this_success == 0:
-        print(f'  {mode}: cumulative={cumulative}/{target}  (no rate data this stage)')
+        print(f'  {mode}: cumulative={cumulative}/{target}  (no rate data this stage){bf_suffix}')
         continue
 
     stage_wall_s = max(timestamps) - min(timestamps)
     stage_wall_h = stage_wall_s / 3600.0
     rate_per_hour = this_success / stage_wall_h if stage_wall_h > 0 else 0
     if rate_per_hour <= 0:
-        print(f'  {mode}: cumulative={cumulative}/{target}  rate=0/hr -- cannot project')
+        print(f'  {mode}: cumulative={cumulative}/{target}  rate=0/hr -- cannot project{bf_suffix}')
         status_overall = 'OVER BUDGET — consider N=5 on nym5 or scope cut'
         continue
 
@@ -336,7 +342,7 @@ for mode in ('vpn', 'tor', 'nym5', 'nym2'):
         mode_status = 'ON TRACK'
 
     print(f'  {mode}: cumulative={cumulative}/{target}  this-stage rate={rate_per_hour:.1f}/hr  '
-          f'remaining-needed={days_needed:.2f}d  license-remaining={days_remaining}d  [{mode_status}]')
+          f'remaining-needed={days_needed:.2f}d  license-remaining={days_remaining}d  [{mode_status}]{bf_suffix}')
 
 print()
 print(f'OVERALL: {status_overall}')

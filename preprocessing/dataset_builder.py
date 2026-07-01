@@ -126,7 +126,13 @@ def build_dataset(labels_jsonl: str,
     for i, rec in enumerate(records):
         visit_id  = rec["visit_id"]
         url       = rec["url"]
-        client_id = visit_id.split("_v")[0]   # e.g. "tor-client1"
+        # Handle both _vNNNNN (primary) and _bfNNNNN (backfill) visit ID formats
+        for _sep in ("_bf", "_v"):
+            if _sep in visit_id:
+                client_id = visit_id.split(_sep)[0]
+                break
+        else:
+            client_id = visit_id
 
         ingress_pcap = data_dir / f"{visit_id}_ingress.pcap"
         egress_pcap  = data_dir / f"{visit_id}_egress.pcap"

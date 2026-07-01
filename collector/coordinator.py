@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import itertools
 import json
 import os
 import re
@@ -975,6 +976,7 @@ class VisitRecord:
     ingress_packets: int = 0    # zero-ingress guard: see count_pcap_packets()
     circuit_info:    str = ""   # guard/gateway logged after circuit rotation
     tun1_ip:         str = ""   # nym2 only: dynamic tun1 IP used for BPF + direction
+    backfill:        bool = False
 
 
 def run_single_visit(url: str, mode: str,
@@ -983,7 +985,8 @@ def run_single_visit(url: str, mode: str,
                      visit_id: str,
                      client_id: str,
                      rotate_circuits: bool = False,
-                     client_cfg: dict | None = None) -> VisitRecord:
+                     client_cfg: dict | None = None,
+                     backfill: bool = False) -> VisitRecord:
     """
     Full lifecycle for one visit:
       0. (Optional) Rotate circuit — NEWNYM for Tor, reconnect for Nym
@@ -1210,6 +1213,7 @@ def run_single_visit(url: str, mode: str,
         ingress_packets = ingress_packet_count,
         circuit_info    = circuit_info,
         tun1_ip         = tun1_ip,
+        backfill        = backfill,
     )
 
 
@@ -1219,7 +1223,9 @@ def run_dataset(url_list_path: str, mode: str,
                 visits_per_url: int, output_dir: Path,
                 client_id: str,
                 rotate_circuits: bool = False,
-                rotate_every: int = 1):
+                rotate_every: int = 1,
+                backfill_urls_path: str | None = None,
+                backfill_stop_file: str | None = None):
     """
     Iterates over URLs × visits, calls run_single_visit for each,
     and appends VisitRecords to a .jsonl metadata log.
@@ -1299,6 +1305,8 @@ def run_dataset(url_list_path: str, mode: str,
                         vid = rec.get("visit_id", "")
                         if "_v" in vid:
                             serial = max(serial, int(vid.split("_v")[-1]))
+                        elif "_bf" in vid:
+                            serial = max(serial, int(vid.split("_bf")[-1]))
                         if rec.get("visit_status") == "success":
                             url_key = rec.get("url", "")
                             if url_key:
@@ -1528,6 +1536,101 @@ def run_dataset(url_list_path: str, mode: str,
             print(f"[coordinator] *** alerts were fired during this run — "
                   f"see {alerts_log} ***")
 
+        # ── Backfill loop ──────────────────────────────────────────────────
+        # Enabled only when --backfill-urls and --backfill-stop-file are both
+        # set (run_stage.sh passes them when BACKFILL=1). Cycles through the
+        # shared URLs continuously, stopping as soon as the sentinel file
+        # appears (created by the nym5 monitor in run_stage.sh). Uses the same
+        # wedge-recovery machinery as the primary loop; visits are tagged
+        # backfill=True so the budget tracker and dataset builder can
+        # distinguish them.
+        if backfill_urls_path and backfill_stop_file:
+            bf_stop = Path(backfill_stop_file)
+            if bf_stop.exists():
+                print(f"[coordinator] backfill: stop file already present — skipping")
+            else:
+                bf_urls = [URL_BASE[mode] + "/" + l.strip()
+                           for l in Path(backfill_urls_path).read_text().splitlines()
+                           if l.strip() and not l.startswith("#")]
+                if not bf_urls:
+                    print(f"[coordinator] backfill: no URLs in {backfill_urls_path!r} — skipping")
+                else:
+                    print(f"[coordinator] backfill start: cycling {len(bf_urls)} URL(s), "
+                          f"stop when {backfill_stop_file!r} exists")
+                    bf_count = 0
+                    bf_status: dict[str, int] = defaultdict(int)
+                    for url in itertools.cycle(bf_urls):
+                        if bf_stop.exists():
+                            break
+                        serial += 1
+                        bf_count += 1
+                        visit_id = f"{client_id}_bf{serial:05d}"
+                        should_rotate = rotate_circuits and ((serial - 1) % rotate_every == 0)
+                        print(f"[bf {bf_count}] {visit_id} — {url}")
+
+                        visit_attempt = 0
+                        while True:
+                            if bf_stop.exists():
+                                break
+                            visit_attempt += 1
+                            healthy = False
+                            wedge_reason = None
+                            if not (client_ssh.get_transport() and
+                                    client_ssh.get_transport().is_active()):
+                                try:
+                                    client_ssh = retry_ssh_connect(CLIENTS[client_id])
+                                except Exception as e:
+                                    wedge_reason = f"reconnect failed: {e}"
+                            if wedge_reason is None:
+                                healthy, reason = check_client_health(client_ssh, mode)
+                                wedge_reason = None if healthy else f"preflight: {reason}"
+                            if healthy:
+                                try:
+                                    record = run_single_visit(
+                                        url, mode,
+                                        ingress_ssh, egress_ssh, client_ssh,
+                                        output_dir,
+                                        visit_id=visit_id,
+                                        client_id=client_id,
+                                        rotate_circuits=should_rotate,
+                                        client_cfg=CLIENTS[client_id],
+                                        backfill=True,
+                                    )
+                                    with log_path.open("a") as f:
+                                        f.write(json.dumps(asdict(record)) + "\n")
+                                    bf_status[record.visit_status] += 1
+                                    break
+                                except Exception as e:
+                                    wedge_reason = f"mid-visit exception: {e}"
+                            if visit_attempt > WEDGE_MAX_RECOVERY_ATTEMPTS:
+                                bf_status["WEDGE_UNRECOVERABLE"] += 1
+                                with log_path.open("a") as f:
+                                    f.write(json.dumps({
+                                        "visit_id": visit_id, "url": url, "mode": mode,
+                                        "visit_status": "WEDGE_UNRECOVERABLE",
+                                        "backfill": True,
+                                        "wedge_reason": wedge_reason,
+                                    }) + "\n")
+                                break
+                            recovered, method, new_ssh = recover_wedged_client(
+                                client_id, CLIENTS[client_id], mode
+                            )
+                            if recovered and new_ssh is not None:
+                                try:
+                                    client_ssh.close()
+                                except Exception:
+                                    pass
+                                client_ssh = new_ssh
+                            else:
+                                fire_alert(
+                                    output_dir,
+                                    f"{client_id} ({mode}) backfill: recovery attempt "
+                                    f"failed (method={method}) for visit {visit_id}",
+                                )
+                        time.sleep(2)
+                    print(f"[coordinator] backfill done: {bf_count} extra visits — "
+                          f"{dict(sorted(bf_status.items(), key=lambda kv: -kv[1]))}")
+
     finally:
         ssh_run(ingress_ssh, f"rm -rf {ingress_capture_subdir}", check=False)
         ssh_run(egress_ssh,  f"rm -rf {egress_capture_subdir}",  check=False)
@@ -1553,9 +1656,18 @@ if __name__ == "__main__":
                         help="Rotate only every Nth visit (default 1 = every visit, "
                              "same as before). Visits in between reuse the existing "
                              "circuit — no reconnect, no rotation sleep.")
+    parser.add_argument("--backfill-urls",      default=None,
+                        help="Path to file of bare URL paths to cycle through after "
+                             "primary collection finishes (enables backfill). "
+                             "Requires --backfill-stop-file.")
+    parser.add_argument("--backfill-stop-file", default=None,
+                        help="Sentinel file path; backfill stops when this file exists "
+                             "(created by the nym5 monitor in run_stage.sh).")
     args = parser.parse_args()
     if args.rotate_every < 1:
         parser.error("--rotate-every must be >= 1")
 
     run_dataset(args.urls, args.mode, args.visits, Path(args.output), args.client,
-                rotate_circuits=args.rotate_circuits, rotate_every=args.rotate_every)
+                rotate_circuits=args.rotate_circuits, rotate_every=args.rotate_every,
+                backfill_urls_path=args.backfill_urls,
+                backfill_stop_file=args.backfill_stop_file)

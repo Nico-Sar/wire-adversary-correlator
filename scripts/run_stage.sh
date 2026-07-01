@@ -44,6 +44,7 @@ VISITS_LIGHT="${VISITS_LIGHT:-}"   # no safe default — see header comment
 # FULL_URLS when called without this env var (backward compat, manual runs).
 TOR_URLS="${TOR_URLS:-$FULL_URLS}"
 ROTATE_EVERY_NYM=3
+BACKFILL="${BACKFILL:-0}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/nico-thesis}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
 INGRESS_IP="204.168.184.30"
@@ -180,15 +181,70 @@ launch_client() {
 
 is_reachable() { printf '%s\n' "${REACHABLE[@]}" | grep -qx "$1"; }
 
+# ── 3b. Backfill setup (BACKFILL=1 only) ──────────────────────────────────────
+# Compute URLs shared between the primary stage list and the light list so
+# vpn/tor collect extra visits on those URLs while nym5 is still running.
+# If there is no intersection (shouldn't happen in practice) fall back to the
+# full stage URL list so backfill always has something to do.
+BACKFILL_STOP="$OUTPUT/backfill_stop"
+rm -f "$BACKFILL_STOP"
+VPN_BF_ARGS=(); TOR_BF_ARGS=()
+if (( BACKFILL && RUN_FULL && RUN_LIGHT )); then
+    BACKFILL_VPN_URLS="$OUTPUT/_backfill_vpn_urls.txt"
+    comm -12 <(sort "$FULL_URLS") <(sort "$LIGHT_URLS") > "$BACKFILL_VPN_URLS" 2>/dev/null || true
+    if [[ ! -s "$BACKFILL_VPN_URLS" ]]; then
+        cp "$FULL_URLS" "$BACKFILL_VPN_URLS"
+        log "backfill vpn: no intersection with light list — falling back to full stage URLs"
+    fi
+    VPN_BF_ARGS=(--backfill-urls "$BACKFILL_VPN_URLS" --backfill-stop-file "$BACKFILL_STOP")
+    log "backfill vpn: $(wc -l < "$BACKFILL_VPN_URLS" | tr -d ' ') shared URL(s) → $BACKFILL_VPN_URLS"
+fi
+if (( BACKFILL && RUN_TOR && RUN_LIGHT )); then
+    BACKFILL_TOR_URLS="$OUTPUT/_backfill_tor_urls.txt"
+    comm -12 <(sort "$TOR_URLS") <(sort "$LIGHT_URLS") > "$BACKFILL_TOR_URLS" 2>/dev/null || true
+    if [[ ! -s "$BACKFILL_TOR_URLS" ]]; then
+        cp "$TOR_URLS" "$BACKFILL_TOR_URLS"
+        log "backfill tor: no intersection with light list — falling back to tor stage URLs"
+    fi
+    TOR_BF_ARGS=(--backfill-urls "$BACKFILL_TOR_URLS" --backfill-stop-file "$BACKFILL_STOP")
+    log "backfill tor: $(wc -l < "$BACKFILL_TOR_URLS" | tr -d ' ') shared URL(s) → $BACKFILL_TOR_URLS"
+fi
+
 log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- vpn=$RUN_FULL tor=$RUN_TOR light=$RUN_LIGHT"
-is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL"
-is_reachable vpn-client2  && (( RUN_FULL )) && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL"
-is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
-is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
+is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL" "${VPN_BF_ARGS[@]}"
+is_reachable vpn-client2  && (( RUN_FULL )) && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL" "${VPN_BF_ARGS[@]}"
+is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits "${TOR_BF_ARGS[@]}"
+is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits "${TOR_BF_ARGS[@]}"
 is_reachable nym5-client1 && launch_client nym5-client1 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+
+# ── 3c. Backfill stop-file monitor ────────────────────────────────────────────
+# When BACKFILL=1 and nym5 clients were launched, watch their PIDs in a
+# background subshell. Once every nym5 PID exits, touch the stop file so
+# coordinator.py's backfill loop terminates. If no nym5 client launched,
+# create the stop file immediately (nothing to wait for).
+BACKFILL_MONITOR_PID=0
+if (( BACKFILL && RUN_LIGHT )); then
+    NYM5_PIDS=()
+    for _c in nym5-client1 nym5-client2; do
+        [[ -v PIDS[$_c] ]] && NYM5_PIDS+=("${PIDS[$_c]}")
+    done
+    if (( ${#NYM5_PIDS[@]} > 0 )); then
+        (
+            for _pid in "${NYM5_PIDS[@]}"; do
+                while kill -0 "$_pid" 2>/dev/null; do sleep 30; done
+            done
+            touch "$BACKFILL_STOP"
+        ) &
+        BACKFILL_MONITOR_PID=$!
+        log "backfill monitor started (watching nym5 PIDs: ${NYM5_PIDS[*]})"
+    else
+        log "backfill: no nym5 clients launched — creating stop file immediately"
+        touch "$BACKFILL_STOP"
+    fi
+fi
 
 launched_clients="${!PIDS[*]}"
 {
@@ -213,6 +269,7 @@ done
 echo "failed=${FAILED_CLIENTS[*]:-none}" >> "$OUTPUT/stage_meta.txt"
 
 kill "$DROP_MONITOR_PID" 2>/dev/null || true
+[[ "$BACKFILL_MONITOR_PID" -gt 0 ]] && kill "$BACKFILL_MONITOR_PID" 2>/dev/null || true
 
 log "Stage done. Launched: ${#REACHABLE[@]}  Skipped: ${#SKIPPED[@]}  Process-failed: ${#FAILED_CLIENTS[@]}"
 if [[ ${#SKIPPED[@]} -gt 0 || ${#FAILED_CLIENTS[@]} -gt 0 ]]; then

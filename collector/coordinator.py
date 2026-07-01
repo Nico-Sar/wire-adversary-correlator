@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import fcntl
 import itertools
 import json
 import os
@@ -695,6 +696,24 @@ _SOFT_WEDGE_SSH_RETRY_DELAY = 10
 # not finished booting — poll instead of single-shot-checking.
 _WEDGE_HEALTH_POLL_TIMEOUT_S  = 90
 _WEDGE_HEALTH_POLL_INTERVAL_S = 5
+# Nym-specific connection-level reconnect attempts (Tier 1a in recover_wedged_client).
+# The common trigger for nym mass-hangs is a transient gateway lookup failure
+# ("Failed to lookup gateways with SOCKS5 data: failed to get gateways") which
+# leaves nym-vpnd running but SOCKS5 in State:Disabled / no tun. nym-vpnc
+# reconnect fixes this without a VM reset. Retry a couple of times with a short
+# gap — the gateway service may still be recovering — before falling through to
+# service restart (Tier 1b) or hard reset (Tier 2).
+_NYM_RECONNECT_RETRIES       = 2
+_NYM_RECONNECT_RETRY_DELAY_S = 15
+# hcloud per-server lock + retry-on-locked constants.
+# "resource is locked" is a transient Hetzner API state (action already in
+# flight on that server). Retry with exponential backoff instead of failing;
+# use a per-server flock file to prevent two callers from ever firing
+# overlapping ops on the same VM (distinct VMs are independent and parallel).
+_HCLOUD_RESET_MAX_LOCKED_RETRIES  = 8
+_HCLOUD_RESET_LOCKED_BACKOFF_BASE = 15    # seconds; doubles per retry, capped at:
+_HCLOUD_RESET_LOCKED_BACKOFF_MAX  = 120   # seconds
+_HCLOUD_RESET_CMD_TIMEOUT         = 120   # per-attempt subprocess timeout (s)
 
 
 def _poll_until_healthy(ssh: paramiko.SSHClient, mode: str,
@@ -865,20 +884,94 @@ def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool
     return True, ""
 
 
+def _hcloud_reset(client_id: str) -> tuple[bool, str]:
+    """
+    Submit `hcloud server reset <client_id>` with two reliability layers:
+
+    1. Per-server exclusive file lock (/tmp/hcloud_reset_{id}.lock, fcntl LOCK_EX)
+       so no two callers ever fire overlapping resets on the same VM. The lock
+       is held only for the duration of the hcloud subprocess call — distinct
+       VMs lock independently and reset in parallel. The same lock file is used
+       by run_stage.sh's ensure_client_reachable (via bash flock) so bash and
+       Python callers are mutually exclusive on the same server.
+
+    2. Retry on "resource is locked" — a transient Hetzner API state meaning an
+       op is already in progress on this server (a peer may have fired a reset,
+       or the user ran one manually). We back off and retry instead of failing,
+       because the lock will clear once the in-flight action completes.
+
+    Returns (ok: bool, fail_reason: str).
+    """
+    hcloud = shutil.which("hcloud") or "hcloud"
+    lock_path = Path(f"/tmp/hcloud_reset_{client_id}.lock")
+    lock_path.touch(exist_ok=True)
+
+    delay = _HCLOUD_RESET_LOCKED_BACKOFF_BASE
+    for attempt in range(1, _HCLOUD_RESET_MAX_LOCKED_RETRIES + 1):
+        # Acquire LOCK_EX only for the subprocess call; released on fd close
+        # so other VMs (different lock files) proceed in parallel.
+        with open(lock_path, "a") as lock_fh:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+            try:
+                result = subprocess.run(
+                    [hcloud, "server", "reset", client_id],
+                    capture_output=True, text=True,
+                    timeout=_HCLOUD_RESET_CMD_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                return (False,
+                        f"hcloud_reset_timeout_after_{_HCLOUD_RESET_CMD_TIMEOUT}s")
+            except Exception as e:
+                return False, f"hcloud_reset_exception: {e}"
+            # lock_fh.__exit__ closes fd → LOCK_EX released here
+
+        if result.returncode == 0:
+            return True, ""
+
+        stderr = result.stderr.strip()
+        if "locked" in stderr.lower():
+            if attempt >= _HCLOUD_RESET_MAX_LOCKED_RETRIES:
+                return (False,
+                        f"hcloud_reset_still_locked_after_{attempt}_retries: "
+                        f"{stderr[:200]}")
+            print(f"  [hcloud] {client_id}: resource locked "
+                  f"(attempt {attempt}/{_HCLOUD_RESET_MAX_LOCKED_RETRIES})"
+                  f" — retrying in {delay}s")
+            time.sleep(delay)
+            delay = min(delay * 2, _HCLOUD_RESET_LOCKED_BACKOFF_MAX)
+        else:
+            return (False,
+                    f"hcloud_reset_failed (rc={result.returncode}): {stderr[:200]}")
+
+    return False, "hcloud_reset_max_retries_exceeded"  # not reachable
+
+
 def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
     """
-    Bounded recovery for a wedged client. Tries soft recovery (SSH still
-    reachable, restart nym-vpnd + reapply route) first; falls back to hard
-    recovery (hcloud reset, out-of-band of the broken network path) only if
-    SSH itself doesn't come back within a short bounded retry window.
+    Three-tier recovery escalation. Each tier is only reached if the previous
+    one failed — hcloud reset is the last resort, not the first.
+
+    Tier 1a — nym connection reconnect (nym5/nym2 only, SSH reachable,
+      nym-vpnd active): the common mass-hang trigger is a transient nym
+      gateway lookup failure that leaves nym-vpnd running but SOCKS5 in
+      State:Disabled / no tun. nym-vpnc reconnect + socks5 enable fixes it
+      without touching the VM or the service. Retried _NYM_RECONNECT_RETRIES
+      times with a short gap (gateway service may still be recovering).
+
+    Tier 1b — service restart (SSH reachable, all modes): nym-vpnd crashed or
+      Tier 1a exhausted. systemctl restart nym-vpnd + route reapplication.
+      Slower than reconnect but doesn't need an out-of-band API call.
+
+    Tier 2 — hcloud reset (SSH unreachable or both soft tiers failed):
+      _hcloud_reset() serializes per-server and retries on "resource is locked"
+      so concurrent recovery attempts on the same VM don't collide.
 
     Returns (recovered, method, new_client_ssh). new_client_ssh is None if
-    recovery failed — callers must not assume the old client_ssh is usable
-    either way and should always use the returned connection.
+    recovery failed — callers must not assume the old client_ssh is usable.
     """
     host = client_cfg["host"]
 
-    # ── Tier 1: soft — is SSH actually reachable right now? ───────────────
+    # ── Attempt SSH connection ─────────────────────────────────────────────
     ssh = None
     for attempt in range(_SOFT_WEDGE_SSH_RETRIES):
         try:
@@ -889,8 +982,37 @@ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[
                 time.sleep(_SOFT_WEDGE_SSH_RETRY_DELAY)
 
     if ssh is not None:
-        print(f"  [wedge-recovery] {client_id}: SSH reachable — soft recovery "
-              f"(restart nym-vpnd, reapply route)")
+        # ── Tier 1a: nym-vpnc reconnect (nym5/nym2, nym-vpnd active) ──────────
+        # Skip for vpn/tor — they have no nym-vpnc, and check_client_health
+        # for those modes only tests SSH echo, which is already up here.
+        if mode in ("nym5", "nym2"):
+            for conn_attempt in range(1, _NYM_RECONNECT_RETRIES + 1):
+                vpnd_active = "active" == ssh_run(
+                    ssh,
+                    "systemctl is-active nym-vpnd 2>/dev/null || echo inactive",
+                    check=False,
+                ).strip()
+                if not vpnd_active:
+                    print(f"  [wedge-recovery] {client_id}: nym-vpnd not active "
+                          f"— skipping reconnect, going to service restart")
+                    break
+                print(f"  [wedge-recovery] {client_id}: nym-vpnd active but "
+                      f"SOCKS5/tun down — nym-vpnc reconnect "
+                      f"(attempt {conn_attempt}/{_NYM_RECONNECT_RETRIES})")
+                ssh_run(ssh, "nym-vpnc reconnect 2>/dev/null || true", check=False)
+                ssh_run(ssh, "nym-vpnc socks5 enable 2>/dev/null || true", check=False)
+                healthy, reason = _poll_until_healthy(ssh, mode)
+                if healthy:
+                    return True, "soft_nym_reconnect", ssh
+                print(f"  [wedge-recovery] {client_id}: reconnect attempt "
+                      f"{conn_attempt}/{_NYM_RECONNECT_RETRIES} failed ({reason})"
+                      + (" — retrying" if conn_attempt < _NYM_RECONNECT_RETRIES
+                         else " — falling through to service restart"))
+                if conn_attempt < _NYM_RECONNECT_RETRIES:
+                    time.sleep(_NYM_RECONNECT_RETRY_DELAY_S)
+
+        # ── Tier 1b: service restart (all modes) ──────────────────────────────
+        print(f"  [wedge-recovery] {client_id}: restarting nym-vpnd service")
         try:
             ssh_run(ssh, "systemctl restart nym-vpnd", check=False)
             if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER:
@@ -899,33 +1021,21 @@ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[
             healthy, reason = _poll_until_healthy(ssh, mode)
             if healthy:
                 return True, "soft_restart_nym_vpnd", ssh
-            print(f"  [wedge-recovery] {client_id}: still unhealthy after soft "
-                  f"recovery ({reason}) — escalating to hard recovery")
+            print(f"  [wedge-recovery] {client_id}: still unhealthy after service "
+                  f"restart ({reason}) — escalating to hcloud reset")
         except Exception as e:
-            print(f"  [wedge-recovery] {client_id}: soft recovery action failed: {e} "
-                  f"— escalating to hard recovery")
+            print(f"  [wedge-recovery] {client_id}: service restart failed: {e} "
+                  f"— escalating to hcloud reset")
         try:
             ssh.close()
         except Exception:
             pass
 
-    # ── Tier 2: hard — SSH unreachable or soft recovery didn't restore health ──
-    print(f"  [wedge-recovery] {client_id}: attempting hcloud reset "
-          f"(host={host})")
-    hcloud = shutil.which("hcloud") or "hcloud"
-    try:
-        # hcloud CLI polls the reset action to completion before returning —
-        # observed taking ~30s in practice, so a 30s subprocess timeout was
-        # razor's-edge and intermittently aborted the call right as it would
-        # have succeeded, permanently failing recovery for no real reason.
-        result = subprocess.run(
-            [hcloud, "server", "reset", client_id],
-            capture_output=True, text=True, timeout=90,
-        )
-        if result.returncode != 0:
-            return False, f"hcloud_reset_failed: {result.stderr.strip()[:200]}", None
-    except Exception as e:
-        return False, f"hcloud_reset_exception: {e}", None
+    # ── Tier 2: hcloud reset — SSH unreachable or soft recovery exhausted ──────
+    print(f"  [wedge-recovery] {client_id}: attempting hcloud reset (host={host})")
+    ok, fail_reason = _hcloud_reset(client_id)
+    if not ok:
+        return False, fail_reason, None
 
     deadline = time.time() + _HARD_WEDGE_REBOOT_WAIT_S
     ssh = None

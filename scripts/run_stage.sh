@@ -125,10 +125,29 @@ ensure_client_reachable() {
     log "WARNING: $client_id ($host) unreachable — attempting hcloud reset"
     local hcloud; hcloud=$(command -v hcloud || echo "$HOME/bin/hcloud")
     [[ -x "$hcloud" ]] || { log "ERROR: hcloud CLI not found — cannot recover $client_id"; return 1; }
-    if ! "$hcloud" server reset "$client_id" >/dev/null 2>&1; then
-        log "ERROR: hcloud reset failed for $client_id"
-        return 1
-    fi
+
+    # Use the same per-server lock file as coordinator.py's _hcloud_reset() so
+    # bash and Python callers never fire overlapping ops on the same VM.
+    # Retry on "resource is locked" (another op in flight) with backoff.
+    local lock_file="/tmp/hcloud_reset_${client_id}.lock"
+    touch "$lock_file"
+    local attempt=0 delay=15 reset_out reset_rc
+    while true; do
+        attempt=$(( attempt + 1 ))
+        reset_out=$(flock -x "$lock_file" "$hcloud" server reset "$client_id" 2>&1)
+        reset_rc=$?
+        if [[ $reset_rc -eq 0 ]]; then
+            break
+        elif echo "$reset_out" | grep -qi "locked" && [[ $attempt -lt 8 ]]; then
+            log "WARNING: $client_id hcloud reset locked (attempt $attempt/8) — retrying in ${delay}s"
+            sleep "$delay"
+            delay=$(( delay < 60 ? delay * 2 : 120 ))
+        else
+            log "ERROR: hcloud reset failed for $client_id (attempt $attempt): $reset_out"
+            return 1
+        fi
+    done
+
     local deadline=$((SECONDS + CLIENT_HANG_POLL_TIMEOUT_S))
     while (( SECONDS < deadline )); do
         if ssh $SSH_OPTS "root@$host" 'echo ok' >/dev/null 2>&1; then

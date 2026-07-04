@@ -471,10 +471,27 @@ def rotate_circuit_nym(
     new_ssh = retry_ssh_connect(client_cfg)
 
     # 5b — poll until SOCKS5 port 1080 is listening (nym5 only; nym2 uses WireGuard)
+    #
+    # The channel can die AGAIN here, after already surviving one reconnect
+    # above: the nohup'd rotate script keeps mutating routing/nft state for a
+    # while after the first successful reconnect (post-connect.sh's own
+    # multi-second sequence, SSH-safety reassertion, etc), and ssh_run raises
+    # even with check=False on a dead channel. Confirmed live (2026-07-04):
+    # this exact spot crashed the whole coordinator process mid-rotation.
+    # Treat a mid-poll disconnect as "reconnect and keep polling", not fatal.
     if socks5:
         poll_start = time.time()
         while True:
-            out = ssh_run(new_ssh, "ss -tnlp | grep 1080 || true", check=False)
+            try:
+                out = ssh_run(new_ssh, "ss -tnlp | grep 1080 || true", check=False)
+            except Exception as e:
+                print(f"  [rotate-nym]  ssh dropped mid-poll ({e}) — reconnecting")
+                try:
+                    new_ssh.close()
+                except Exception:
+                    pass
+                new_ssh = retry_ssh_connect(client_cfg)
+                out = ""
             if "1080" in out:
                 print(f"  [rotate-nym]  SOCKS5 port 1080 ready ({time.time() - poll_start:.0f}s)")
                 break
@@ -484,8 +501,16 @@ def rotate_circuit_nym(
             print(f"  [rotate-nym]  waiting for SOCKS5… ({time.time() - poll_start:.0f}s)")
             time.sleep(_NYM_POLL_INTERVAL_S)
 
-    # 6 — read status from the live tunnel
-    status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || cat /tmp/nym_rotate.log 2>/dev/null || echo unknown", check=False)
+    # 6 — read status from the live tunnel (same dead-channel risk as 5b)
+    try:
+        status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || cat /tmp/nym_rotate.log 2>/dev/null || echo unknown", check=False)
+    except Exception:
+        try:
+            new_ssh.close()
+        except Exception:
+            pass
+        new_ssh = retry_ssh_connect(client_cfg)
+        status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || echo unknown", check=False)
 
     # nym-vpnc status format (v1.27):
     #   "State: Connected mix to <ip> [<entry-id>] → <ip> [<exit-id>]"
@@ -498,7 +523,15 @@ def rotate_circuit_nym(
 
     circuit_info = f"entry={entry} exit={exit_}"
 
-    routes = ssh_run(new_ssh, "ip route show table 100 2>/dev/null | head -3", check=False)
+    try:
+        routes = ssh_run(new_ssh, "ip route show table 100 2>/dev/null | head -3", check=False)
+    except Exception:
+        try:
+            new_ssh.close()
+        except Exception:
+            pass
+        new_ssh = retry_ssh_connect(client_cfg)
+        routes = "(reconnected after routes check dropped)"
     print(f"  [rotate-nym]  {circuit_info}  routes={routes!r:.80}")
     return circuit_info, new_ssh
 
@@ -705,6 +738,16 @@ _WEDGE_HEALTH_POLL_INTERVAL_S = 5
 # service restart (Tier 1b) or hard reset (Tier 2).
 _NYM_RECONNECT_RETRIES       = 2
 _NYM_RECONNECT_RETRY_DELAY_S = 15
+# Tier 1a used to run `nym-vpnc reconnect` directly over the existing SSH
+# channel. Confirmed live (2026-07-04, canary nym5-client2) that reconnect
+# itself transiently breaks SSH — it rebuilds routing/nft state and the
+# in-flight channel dies mid-command, so the follow-up `socks5 enable` and
+# the health poll then run against a dead channel and never recover, hanging
+# tier 1a instead of escalating. Fix mirrors rotate_circuit_nym's already-
+# working pattern: write the reconnect+reassert steps to a script, launch it
+# nohup'd so it survives the channel dying, close this channel proactively,
+# then open a fresh SSH connection rather than trust the old one.
+_NYM_TIER1A_RECONNECT_WAIT_S = 40   # reconnect (~30s) + post-connect.sh (~5s) + margin
 # hcloud per-server lock + retry-on-locked constants.
 # "resource is locked" is a transient Hetzner API state (action already in
 # flight on that server). Retry with exponential backoff instead of failing;
@@ -855,6 +898,16 @@ def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool
          short timeout — a hard (full network-stack) wedge fails here.
       2. Mode-specific tunnel signal — a soft (nym-vpnd/tunnel-only) wedge
          fails here while SSH itself is fine.
+
+    The whole body is one try/except, not just step 1: the mode-specific
+    ssh_run() calls below can also raise (TimeoutError/SSHException) even
+    with check=False — that only suppresses non-zero exit codes, not a
+    channel that dies between here and the previous check. Originally only
+    step 1 was guarded, so a channel dying during step 2 raised uncaught out
+    of this function into whichever tier's polling loop called it, crashing
+    the entire coordinator process for that client with no fallback —
+    confirmed live (2026-07-04, nym5-client2's coordinator process vanished
+    exactly this way, traceback rooted in this function via _poll_until_healthy).
     """
     try:
         if not (client_ssh.get_transport() and client_ssh.get_transport().is_active()):
@@ -864,22 +917,22 @@ def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool
         stdout.channel.recv_exit_status()
         if out != "ALIVE":
             return False, f"ssh command did not echo ALIVE (got {out!r})"
+
+        if mode == "nym5":
+            socks5 = ssh_run(client_ssh, "ss -tnlp 2>/dev/null | grep 1080 || true", check=False)
+            if "1080" not in socks5:
+                return False, "nym5 SOCKS5 port 1080 not listening"
+        elif mode == "nym2":
+            tun_check = ssh_run(client_ssh, "ip link show tun1 2>/dev/null || true", check=False)
+            if "tun1" not in tun_check:
+                return False, "nym2 tun1 interface not present"
+
+        if mode in ("nym2", "nym5"):
+            status = ssh_run(client_ssh, "timeout 8 nym-vpnc status 2>&1 || echo TIMEOUT", check=False)
+            if "TIMEOUT" in status or "Failed to create RPC client" in status:
+                return False, f"nym-vpnc status unresponsive ({status.strip()[:80]!r})"
     except Exception as e:
         return False, f"ssh unreachable: {e}"
-
-    if mode == "nym5":
-        socks5 = ssh_run(client_ssh, "ss -tnlp 2>/dev/null | grep 1080 || true", check=False)
-        if "1080" not in socks5:
-            return False, "nym5 SOCKS5 port 1080 not listening"
-    elif mode == "nym2":
-        tun_check = ssh_run(client_ssh, "ip link show tun1 2>/dev/null || true", check=False)
-        if "tun1" not in tun_check:
-            return False, "nym2 tun1 interface not present"
-
-    if mode in ("nym2", "nym5"):
-        status = ssh_run(client_ssh, "timeout 8 nym-vpnc status 2>&1 || echo TIMEOUT", check=False)
-        if "TIMEOUT" in status or "Failed to create RPC client" in status:
-            return False, f"nym-vpnc status unresponsive ({status.strip()[:80]!r})"
 
     return True, ""
 
@@ -987,11 +1040,24 @@ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[
         # for those modes only tests SSH echo, which is already up here.
         if mode in ("nym5", "nym2"):
             for conn_attempt in range(1, _NYM_RECONNECT_RETRIES + 1):
-                vpnd_active = "active" == ssh_run(
-                    ssh,
-                    "systemctl is-active nym-vpnd 2>/dev/null || echo inactive",
-                    check=False,
-                ).strip()
+                # ssh_run can raise (TimeoutError/SSHException) even with
+                # check=False — that only suppresses non-zero exit codes, not
+                # a dead channel. Uncaught here, this used to crash the whole
+                # coordinator process for this client with no fallback to
+                # Tier 1b/2 at all — confirmed live (2026-07-04, nym5-client2
+                # vanished mid-recovery with an unhandled TimeoutError
+                # traceback). Treat it as "ssh is gone", not a bug to raise.
+                try:
+                    vpnd_active = "active" == ssh_run(
+                        ssh,
+                        "systemctl is-active nym-vpnd 2>/dev/null || echo inactive",
+                        check=False,
+                    ).strip()
+                except Exception as e:
+                    print(f"  [wedge-recovery] {client_id}: ssh died checking "
+                          f"nym-vpnd status ({e}) — falling through to service restart")
+                    ssh = None
+                    break
                 if not vpnd_active:
                     print(f"  [wedge-recovery] {client_id}: nym-vpnd not active "
                           f"— skipping reconnect, going to service restart")
@@ -999,8 +1065,43 @@ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[
                 print(f"  [wedge-recovery] {client_id}: nym-vpnd active but "
                       f"SOCKS5/tun down — nym-vpnc reconnect "
                       f"(attempt {conn_attempt}/{_NYM_RECONNECT_RETRIES})")
-                ssh_run(ssh, "nym-vpnc reconnect 2>/dev/null || true", check=False)
-                ssh_run(ssh, "nym-vpnc socks5 enable 2>/dev/null || true", check=False)
+                # nohup'd + reassert-and-reopen pattern (see comment on
+                # _NYM_TIER1A_RECONNECT_WAIT_S): reconnect is dispatched to a
+                # detached background script so it survives its own channel
+                # dying, and SSH-safety is reasserted unconditionally inside
+                # that same script rather than over a channel that may
+                # already be gone by the time a follow-up command is sent.
+                socks5_line = (
+                    "nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 "
+                    "--exit-random 2>/dev/null || true\n" if mode == "nym5" else ""
+                )
+                tier1a_script = (
+                    "nym-vpnc reconnect 2>/dev/null || true\n"
+                    + socks5_line
+                    + "/usr/local/bin/nym-post-connect.sh 2>/dev/null || true\n"
+                )
+                try:
+                    sftp = ssh.open_sftp()
+                    with sftp.file("/tmp/nym_tier1a_reconnect.sh", "w") as fh:
+                        fh.write(tier1a_script)
+                    sftp.close()
+                    ssh_run(ssh, "nohup bash /tmp/nym_tier1a_reconnect.sh "
+                                 "> /tmp/nym_tier1a_reconnect.log 2>&1 &", check=False)
+                except Exception as e:
+                    print(f"  [wedge-recovery] {client_id}: failed to dispatch "
+                          f"reconnect script: {e}")
+                try:
+                    ssh.close()
+                except Exception:
+                    pass
+                time.sleep(_NYM_TIER1A_RECONNECT_WAIT_S)
+                try:
+                    ssh = ssh_connect(client_cfg)
+                except Exception as e:
+                    print(f"  [wedge-recovery] {client_id}: SSH did not come back "
+                          f"after reconnect dispatch: {e}")
+                    ssh = None
+                    break
                 healthy, reason = _poll_until_healthy(ssh, mode)
                 if healthy:
                     return True, "soft_nym_reconnect", ssh
@@ -1012,20 +1113,32 @@ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[
                     time.sleep(_NYM_RECONNECT_RETRY_DELAY_S)
 
         # ── Tier 1b: service restart (all modes) ──────────────────────────────
-        print(f"  [wedge-recovery] {client_id}: restarting nym-vpnd service")
-        try:
-            ssh_run(ssh, "systemctl restart nym-vpnd", check=False)
-            if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER:
-                ssh_run(ssh, "ip route replace default via 10.0.0.1 dev enp7s0 "
-                             "proto static onlink", check=False)
-            healthy, reason = _poll_until_healthy(ssh, mode)
-            if healthy:
-                return True, "soft_restart_nym_vpnd", ssh
-            print(f"  [wedge-recovery] {client_id}: still unhealthy after service "
-                  f"restart ({reason}) — escalating to hcloud reset")
-        except Exception as e:
-            print(f"  [wedge-recovery] {client_id}: service restart failed: {e} "
-                  f"— escalating to hcloud reset")
+        # ssh can be None here if Tier 1a's post-reconnect SSH reopen failed
+        # (see the `ssh = None; break` above) — one more reconnect attempt
+        # before giving up on soft recovery entirely and escalating to hcloud.
+        if ssh is None:
+            try:
+                ssh = ssh_connect(client_cfg)
+            except Exception:
+                ssh = None
+        if ssh is None:
+            print(f"  [wedge-recovery] {client_id}: SSH unreachable — "
+                  f"escalating to hcloud reset")
+        else:
+            print(f"  [wedge-recovery] {client_id}: restarting nym-vpnd service")
+            try:
+                ssh_run(ssh, "systemctl restart nym-vpnd", check=False)
+                if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER:
+                    ssh_run(ssh, "ip route replace default via 10.0.0.1 dev enp7s0 "
+                                 "proto static onlink", check=False)
+                healthy, reason = _poll_until_healthy(ssh, mode)
+                if healthy:
+                    return True, "soft_restart_nym_vpnd", ssh
+                print(f"  [wedge-recovery] {client_id}: still unhealthy after service "
+                      f"restart ({reason}) — escalating to hcloud reset")
+            except Exception as e:
+                print(f"  [wedge-recovery] {client_id}: service restart failed: {e} "
+                      f"— escalating to hcloud reset")
         try:
             ssh.close()
         except Exception:

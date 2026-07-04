@@ -5,6 +5,12 @@
 #    ExecStartPost lines: SOCKS5 configure at t+10s, nft rules at t+15s.
 # 3. Runs systemctl daemon-reload on each VM.
 #
+# nym-post-connect.sh's last line calls /usr/local/bin/nym-ssh-routing-fix.sh,
+# deployed separately by scripts/deploy_nym_ssh_routing_fix.sh — run that
+# script first (or at least once) on any VM before this one, or the call at
+# the end of nym-post-connect.sh will just no-op (file not found, ignored by
+# the calling context but the SSH-survival rule won't get reasserted).
+#
 # Usage:
 #   bash scripts/update_nym_post_connect.sh
 
@@ -40,7 +46,7 @@ nft insert rule inet nym output handle $REJECT_HANDLE oif "eth0" accept
 nft add rule inet nym input tcp dport 22 accept
 nft add rule inet nym input ip saddr 10.0.0.0/16 accept
 echo "Nym post-connect nft rules applied"
-/usr/local/bin/nym-routing-fix.sh
+/usr/local/bin/nym-ssh-routing-fix.sh
 SCRIPT
 chmod +x /usr/local/bin/nym-post-connect.sh
 echo "  nym-post-connect.sh written"

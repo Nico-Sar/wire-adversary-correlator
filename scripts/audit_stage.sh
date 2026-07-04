@@ -294,10 +294,21 @@ for mode in ('vpn', 'tor', 'nym5', 'nym2'):
                     else:
                         cumulative += 1
 
-    # This stage's own primary rate: successes / stage wall-clock (backfill excluded).
+    # This stage's own primary rate: successes / RECENT wall-clock window
+    # (backfill excluded). Deliberately NOT successes / (max-min) over the
+    # whole stage file: a stage that stalled for days (crashed clients,
+    # SSH-drop churn, etc — see the 2026-07-04 nym SSH-survival fix) and was
+    # then resumed keeps every old timestamp in this same file, so max-min
+    # spans the stall too, permanently poisoning the average long after the
+    # underlying problem is fixed and collection is healthy again. Confirmed
+    # live: round_02 stalled ~3 days (Jul 1 -> Jul 4), and a naive full-span
+    # rate would have kept reporting OVER BUDGET for many hours of otherwise-
+    # healthy post-fix collection before enough new volume diluted it.
+    # RATE_WINDOW_H bounds the lookback to "how has it been doing lately" —
+    # a fixed VM reset or two won't trip this, only a stall this window.
+    RATE_WINDOW_H = 3
     this_stage_file = os.path.join(stage_dir, f'{mode}_visits.jsonl')
-    this_success = 0
-    timestamps = []
+    records = []  # (timestamp, is_success) pairs, one per capture event
     if os.path.exists(this_stage_file):
         with open(this_stage_file) as fh:
             for line in fh:
@@ -307,20 +318,28 @@ for mode in ('vpn', 'tor', 'nym5', 'nym2'):
                     r = json.loads(line)
                 except Exception:
                     continue
-                if r.get('visit_status') == 'success' and not r.get('backfill', False):
-                    this_success += 1
-                if 't_capture_start' in r and not r.get('backfill', False):
-                    timestamps.append(r['t_capture_start'])
-                if 't_capture_end' in r and not r.get('backfill', False):
-                    timestamps.append(r['t_capture_end'])
+                if r.get('backfill', False):
+                    continue
+                is_success = r.get('visit_status') == 'success'
+                for key in ('t_capture_start', 't_capture_end'):
+                    if key in r:
+                        records.append((r[key], is_success))
 
     bf_suffix = f'  backfill={backfill_cumulative}' if backfill_cumulative else ''
     remaining = max(0, target - cumulative)
-    if not timestamps or this_success == 0:
+    if not records:
         print(f'  {mode}: cumulative={cumulative}/{target}  (no rate data this stage){bf_suffix}')
         continue
 
-    stage_wall_s = max(timestamps) - min(timestamps)
+    window_start = max(t for t, _ in records) - RATE_WINDOW_H * 3600
+    window_records = [(t, s) for t, s in records if t >= window_start]
+    window_timestamps = [t for t, _ in window_records]
+    this_success = sum(1 for _, s in window_records if s)
+    if not window_timestamps or this_success == 0:
+        print(f'  {mode}: cumulative={cumulative}/{target}  (no rate data in last {RATE_WINDOW_H}h){bf_suffix}')
+        continue
+
+    stage_wall_s = max(window_timestamps) - min(window_timestamps)
     stage_wall_h = stage_wall_s / 3600.0
     rate_per_hour = this_success / stage_wall_h if stage_wall_h > 0 else 0
     if rate_per_hour <= 0:

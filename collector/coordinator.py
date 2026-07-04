@@ -227,6 +227,21 @@ def verify_clock_sync(ingress_ssh, egress_ssh, max_drift_ms=MAX_CLOCK_DRIFT_MS):
 
 def start_remote_capture(ssh_client, iface: str, bpf: str,
                           pcap_remote_path: str) -> str:
+    # Defensive backstop: kill any tshark orphaned by a prior visit whose
+    # cleanup never ran (crash, uncaught exception, or the specific gap this
+    # was written to close — see the try/finally and the failure-path
+    # cleanup in run_single_visit). 120s is far above any real visit's
+    # capture window, so this can never touch a legitimately still-running
+    # capture from a concurrent client sharing this router. Confirmed live
+    # (2026-07-04): 52 orphaned egress tshark processes accumulated this way
+    # and choked out essentially every new capture start on that router —
+    # skipped_tshark_failed hit 93% of nym2 visits before this was found.
+    ssh_run(
+        ssh_client,
+        "for p in $(ps -eo pid,etimes,comm | awk '$3==\"tshark\" && $2>120 {print $1}'); "
+        "do kill -9 \"$p\" 2>/dev/null; done",
+        check=False,
+    )
     log_file = pcap_remote_path.replace('.pcap', '.log')
     cmd = (
         f"/usr/bin/tshark -i {iface} -f '{bpf}' "
@@ -1320,10 +1335,24 @@ def run_single_visit(url: str, mode: str,
         if ingress_err_box[0] or egress_err_box[0]:
             err = ingress_err_box[0] or egress_err_box[0]
             print(f"  [error] tshark failed to start: {err} — skipping")
-            for pid, ssh in [(ingress_pid_box[0], ingress_ssh),
-                             (egress_pid_box[0],  egress_ssh)]:
+            # Whichever side DID start must still be stopped — each wrapped
+            # independently so a failure stopping one side never prevents an
+            # attempt on the other, and never raises uncaught out of this
+            # function. This exact gap orphaned the tshark process on the
+            # side that started fine while the other side failed: confirmed
+            # live (2026-07-04) as the source of 52 leaked egress captures
+            # that then choked out nearly all new capture starts on that
+            # router (the bare stop_remote_capture() call here had no
+            # try/except, unlike the normal-path stop_ingress/stop_egress
+            # closures below).
+            for label, pid, ssh in [("ingress", ingress_pid_box[0], ingress_ssh),
+                                     ("egress",  egress_pid_box[0],  egress_ssh)]:
                 if pid:
-                    stop_remote_capture(ssh, pid)
+                    try:
+                        stop_remote_capture(ssh, pid)
+                    except Exception as e:
+                        print(f"  [warn] stop_remote_capture({label}) failed "
+                              f"after start failure: {e}")
             if mode in ("nym5", "nym2"):
                 ssh_run(client_ssh, "rm -f /tmp/nym_collection_active", check=False)
             return VisitRecord(
@@ -1346,7 +1375,17 @@ def run_single_visit(url: str, mode: str,
         time.sleep(2.0)  # ensure tshark is fully up before triggering visit
         print(f"  [capture] started — ingress PID {ingress_pid}, egress PID {egress_pid}")
 
-        # ── Trigger the browser visit ─────────────────────────────────────
+        # ── Trigger the browser visit, captures guaranteed to stop after ───
+        # trigger_visit (or anything else in this block) raising used to skip
+        # the "Stop captures" step entirely — the exception propagates out of
+        # run_single_visit straight past it, leaking both tshark processes on
+        # every mid-visit exception. Confirmed live (2026-07-04) as the
+        # source of 52 orphaned egress tshark processes that then choked out
+        # nearly all new capture starts on that router (skipped_tshark_failed
+        # hit 93% of nym2 visits). try/finally guarantees the stop always
+        # runs, exception or not — the exception still propagates afterward
+        # for the caller's existing wedge-detection to handle.
+        #
         # No blind same-process retry here on PROXY_CONNECTION_REFUSED: a
         # proxy refusing connections mid-visit means the SOCKS5 listener
         # itself is down, and retrying without restarting nym-vpnd just
@@ -1354,38 +1393,38 @@ def run_single_visit(url: str, mode: str,
         # instead so the caller's wedge-aware loop (preflight checks use the
         # same path) can actually fix it — restart nym-vpnd, poll for
         # health, requeue this same visit_id — before trying again.
-        proxy = PROXY_MAP.get(mode)
-        visit_meta = trigger_visit(client_ssh, url, proxy, visit_id, mode)
-        t_visit_start = visit_meta.get("t_start", time.time())
-        t_visit_end   = visit_meta.get("t_end",   time.time())
-        visit_status  = visit_meta.get("status",  "unknown")
+        try:
+            proxy = PROXY_MAP.get(mode)
+            visit_meta = trigger_visit(client_ssh, url, proxy, visit_id, mode)
+            t_visit_start = visit_meta.get("t_start", time.time())
+            t_visit_end   = visit_meta.get("t_end",   time.time())
+            visit_status  = visit_meta.get("status",  "unknown")
 
-        print(f"  [visit]   {visit_status} — {visit_meta.get('duration_s', '?')}s")
-        time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
+            print(f"  [visit]   {visit_status} — {visit_meta.get('duration_s', '?')}s")
+            time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
+        finally:
+            # Best-effort cleanup (router-side, not part of client wedge
+            # detection) — but an uncaught exception inside a Thread target
+            # dies silently (join() returns normally either way), so a bounded-
+            # timeout exception from a hung router would otherwise vanish
+            # without a trace. Catch and log instead of letting it disappear.
+            def stop_ingress():
+                try:
+                    stop_remote_capture(ingress_ssh, ingress_pid)
+                except Exception as e:
+                    print(f"  [warn] stop_remote_capture(ingress) failed: {e}")
 
-        # ── Stop captures ──────────────────────────────────────────────────
-        # Best-effort cleanup (router-side, not part of client wedge
-        # detection) — but an uncaught exception inside a Thread target
-        # dies silently (join() returns normally either way), so a bounded-
-        # timeout exception from a hung router would otherwise vanish
-        # without a trace. Catch and log instead of letting it disappear.
-        def stop_ingress():
-            try:
-                stop_remote_capture(ingress_ssh, ingress_pid)
-            except Exception as e:
-                print(f"  [warn] stop_remote_capture(ingress) failed: {e}")
+            def stop_egress():
+                try:
+                    stop_remote_capture(egress_ssh, egress_pid)
+                except Exception as e:
+                    print(f"  [warn] stop_remote_capture(egress) failed: {e}")
 
-        def stop_egress():
-            try:
-                stop_remote_capture(egress_ssh, egress_pid)
-            except Exception as e:
-                print(f"  [warn] stop_remote_capture(egress) failed: {e}")
-
-        s_in  = threading.Thread(target=stop_ingress)
-        s_out = threading.Thread(target=stop_egress)
-        s_in.start(); s_out.start()
-        s_in.join();  s_out.join()
-        t_capture_end = time.time()
+            s_in  = threading.Thread(target=stop_ingress)
+            s_out = threading.Thread(target=stop_egress)
+            s_in.start(); s_out.start()
+            s_in.join();  s_out.join()
+            t_capture_end = time.time()
 
         # ── Pull pcaps locally (retry once on transient SCP failure) ──────
         scp_get_with_retry(ingress_ssh, ingress_remote, ingress_local)

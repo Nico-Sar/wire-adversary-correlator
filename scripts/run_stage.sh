@@ -63,11 +63,19 @@ die() { echo "[$(date '+%H:%M:%S')] [$LABEL] [ERROR] $*" >&2; exit 1; }
 [[ -x "$COORDINATOR_PYTHON" ]] \
     || die "venv python not found/executable: $COORDINATOR_PYTHON — collector.coordinator requires the project venv (paramiko, etc.), not system python3"
 
-declare -A CLIENT_IP=(
-    [vpn-client1]="204.168.205.5"     [vpn-client2]="204.168.184.39"
-    [tor-client1]="89.167.102.181"    [tor-client2]="204.168.194.172"
-    [nym5-client1]="204.168.204.120"  [nym5-client2]="204.168.201.84"
-    [nym2-client1]="204.168.181.115"  [nym2-client2]="95.216.218.124"
+# Sourced live from config/infrastructure.py (not hardcoded) — a hardcoded
+# copy here silently drifts every time a client VM is rebuilt with a new IP
+# (confirmed: this map was stale for 3 of 4 nym VMs after the 2026-07-06/07
+# rebuilds, which would have made ensure_client_reachable() below probe dead
+# IPs and skip healthy VMs from every round).
+declare -A CLIENT_IP
+while IFS='=' read -r k v; do CLIENT_IP["$k"]="$v"; done < <(
+    "$COORDINATOR_PYTHON" -c "
+import sys; sys.path.insert(0, '$REPO_ROOT')
+from config.infrastructure import CLIENTS
+for name, cfg in CLIENTS.items():
+    print(f'{name}=' + cfg['host'])
+"
 )
 
 # ── 0. Pre-flight ──────────────────────────────────────────────────────────────
@@ -201,10 +209,13 @@ launch_client() {
 is_reachable() { printf '%s\n' "${REACHABLE[@]}" | grep -qx "$1"; }
 
 # ── 3b. Backfill setup (BACKFILL=1 only) ──────────────────────────────────────
-# Compute URLs shared between the primary stage list and the light list so
-# vpn/tor collect extra visits on those URLs while nym5 is still running.
-# If there is no intersection (shouldn't happen in practice) fall back to the
-# full stage URL list so backfill always has something to do.
+# nym5 is consistently the slowest mode (Sphinx mixnet latency). Once a
+# faster mode (vpn/tor/nym2) exhausts its own primary --visits budget, it
+# keeps collecting extra bonus visits rather than sitting idle, stopping the
+# moment nym5 finishes. vpn/tor backfill against the subset of their URLs
+# shared with the light list (falling back to their full stage list if there's
+# no intersection); nym2 already collects against the light list directly, so
+# it just cycles that same list again — no intersection needed.
 BACKFILL_STOP="$OUTPUT/backfill_stop"
 rm -f "$BACKFILL_STOP"
 VPN_BF_ARGS=(); TOR_BF_ARGS=()
@@ -228,6 +239,14 @@ if (( BACKFILL && RUN_TOR && RUN_LIGHT )); then
     TOR_BF_ARGS=(--backfill-urls "$BACKFILL_TOR_URLS" --backfill-stop-file "$BACKFILL_STOP")
     log "backfill tor: $(wc -l < "$BACKFILL_TOR_URLS" | tr -d ' ') shared URL(s) → $BACKFILL_TOR_URLS"
 fi
+# nym2 already collects against LIGHT_URLS directly (same list nym5 uses) —
+# no intersection needed, it just cycles the same list again once its own
+# primary budget is done, same as vpn/tor, stopping when nym5 finishes.
+NYM2_BF_ARGS=()
+if (( BACKFILL && RUN_LIGHT )); then
+    NYM2_BF_ARGS=(--backfill-urls "$LIGHT_URLS" --backfill-stop-file "$BACKFILL_STOP")
+    log "backfill nym2: cycling light list directly → $LIGHT_URLS"
+fi
 
 log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- vpn=$RUN_FULL tor=$RUN_TOR light=$RUN_LIGHT"
 is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL" "${VPN_BF_ARGS[@]}"
@@ -236,8 +255,8 @@ is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "
 is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits "${TOR_BF_ARGS[@]}"
 is_reachable nym5-client1 && launch_client nym5-client1 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM" "${NYM2_BF_ARGS[@]}"
+is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM" "${NYM2_BF_ARGS[@]}"
 
 # ── 3c. Backfill stop-file monitor ────────────────────────────────────────────
 # When BACKFILL=1 and nym5 clients were launched, watch their PIDs in a

@@ -48,20 +48,22 @@ for arg in "$@"; do
     esac
 done
 
-# ── VM inventory (mirrors config/infrastructure.py) ──────────────────────────
+# ── VM inventory (sourced live from config/infrastructure.py) ────────────────
+# A hardcoded copy here previously drifted stale after every client VM
+# rebuild (confirmed for 3 of 4 nym VMs after the 2026-07-06/07 rebuilds).
 INGRESS_IP="204.168.184.30"
 EGRESS_IP="204.168.189.97"
 WEB_SERVER_IP="204.168.163.45"
 
-declare -A CLIENT_IP=(
-    [vpn-client1]="204.168.205.5"
-    [vpn-client2]="204.168.184.39"
-    [tor-client1]="89.167.102.181"
-    [tor-client2]="204.168.194.172"
-    [nym5-client1]="204.168.204.120"
-    [nym5-client2]="204.168.201.84"
-    [nym2-client1]="204.168.181.115"
-    [nym2-client2]="95.216.218.124"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+declare -A CLIENT_IP
+while IFS='=' read -r k v; do CLIENT_IP["$k"]="$v"; done < <(
+    python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT')
+from config.infrastructure import CLIENTS
+for name, cfg in CLIENTS.items():
+    print(f'{name}=' + cfg['host'])
+"
 )
 
 # ── Result tracking ───────────────────────────────────────────────────────────

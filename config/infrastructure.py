@@ -34,9 +34,9 @@ CLIENTS = {
     "tor-client1":  {"host": "89.167.102.181",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.7"},
     "tor-client2":  {"host": "204.168.194.172", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.8"},
     "nym5-client1": {"host": "204.168.204.120", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.9"},
-    "nym5-client2": {"host": "204.168.201.84",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.10"},
-    "nym2-client1": {"host": "204.168.181.115",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.4"},
-    "nym2-client2": {"host": "95.216.218.124",   "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.6"},
+    "nym5-client2": {"host": "178.104.191.219", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.10"},
+    "nym2-client1": {"host": "95.216.218.124",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.4"},
+    "nym2-client2": {"host": "178.104.184.192", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.6"},
 }
 
 CLIENT_GROUPS = {
@@ -98,6 +98,7 @@ def build_ingress_bpf(mode: str, client_id: str) -> str:
     return f"{BPF_INGRESS[mode]} and host {CLIENTS[client_id]['private_ip']}"
 
 BPF_EGRESS = {
+    "baseline": "tcp port 80   and host 10.1.0.2",
     "vpn":      "tcp port 8080 and host 10.1.0.2",
     "tor":      "tcp port 8081 and host 10.1.0.2",
     "nym5":     "tcp port 8082 and host 10.1.0.2",
@@ -105,6 +106,7 @@ BPF_EGRESS = {
 }
 
 PROXY_MAP = {
+    "baseline": None,
     "tor":      "socks5://127.0.0.1:9050",
     "vpn":      None,
     "nym5":     "socks5://127.0.0.1:1080",
@@ -112,6 +114,7 @@ PROXY_MAP = {
 }
 
 URL_BASE = {
+    "baseline": "http://10.1.0.3",        # port 80 (default)
     "vpn":      "http://10.1.0.3:8080",
     "tor":      "http://204.168.189.97:8081",
     "nym5":     "http://204.168.189.97:8082",

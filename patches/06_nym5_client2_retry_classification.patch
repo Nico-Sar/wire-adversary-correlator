@@ -1,0 +1,166 @@
+--- collector/coordinator.py
++++ /tmp/coordinator.py.proposed_task1
+@@ -295,6 +295,16 @@
+ _NYM_POLL_INTERVAL_S   = 3
+ _NYM_ROTATE_SLEEP_S      = 30   # time to wait after closing SSH before reconnecting
+ _NYM_SOCKS5_POLL_TIMEOUT_S = 90  # max wait for SOCKS5 port 1080 to come up after reconnect
++# PROPOSED (2026-07-12, NOT YET APPLIED — see
++# patches/06_nym5_client2_retry_classification.md): post-rotation gateway
++# reachability probe constants. SOCKS5 port 1080 listening (5b above) proves
++# nym-vpnc's local proxy is up, not that the freshly-assigned exit gateway is
++# actually routing traffic yet — a curl through the proxy to the known-good
++# web server is a ~seconds-cheap way to catch a doomed gateway before
++# spending a full visit timeout (180s for nym5) discovering it via Playwright.
++_NYM5_POST_ROTATE_PROBE_RETRIES     = 2   # 1 initial probe + 1 probe after one re-rotation
++_NYM5_POST_ROTATE_PROBE_TIMEOUT_S   = 8   # curl -m per attempt
++_NYM5_POST_ROTATE_PROBE_RETRY_SLEEP_S = 5  # settle time after re-issuing --exit-random
+ 
+ # Scripts written to /tmp/nym_rotate.sh on the client VM.
+ #
+@@ -516,6 +526,70 @@
+             print(f"  [rotate-nym]  waiting for SOCKS5… ({time.time() - poll_start:.0f}s)")
+             time.sleep(_NYM_POLL_INTERVAL_S)
+ 
++        # 5c — PROPOSED: post-rotation gateway reachability probe. Curl the
++        # known-good web server through the proxy that just came up in 5b.
++        # A 200 confirms the freshly-rotated exit gateway is actually routing
++        # traffic; anything else re-issues --exit-random once and probes
++        # again before giving up and continuing regardless — the visit-level
++        # retry classification (is_socks5_wedge_error, broadened in this same
++        # patch) is the backstop if this still doesn't catch it.
++        gateway_ok = False
++        probe_url = URL_BASE["nym5"] + "/page_html_1.html"
++        for probe_attempt in range(1, _NYM5_POST_ROTATE_PROBE_RETRIES + 1):
++            try:
++                http_code = ssh_run(
++                    new_ssh,
++                    f"curl -s -o /dev/null -m {_NYM5_POST_ROTATE_PROBE_TIMEOUT_S} "
++                    f"--socks5 127.0.0.1:1080 -w '%{{http_code}}' {probe_url} "
++                    f"2>/dev/null || echo 000",
++                    check=False,
++                ).strip()
++            except Exception as e:
++                print(f"  [rotate-nym]  ssh dropped during gateway probe ({e}) — reconnecting")
++                try:
++                    new_ssh.close()
++                except Exception:
++                    pass
++                new_ssh = retry_ssh_connect(client_cfg)
++                http_code = "000"
++            if http_code == "200":
++                print(f"  [rotate-nym]  post-rotation gateway probe OK "
++                      f"(attempt {probe_attempt}/{_NYM5_POST_ROTATE_PROBE_RETRIES})")
++                gateway_ok = True
++                break
++            print(f"  [rotate-nym]  post-rotation gateway probe FAILED "
++                  f"(HTTP {http_code!r}, attempt {probe_attempt}/"
++                  f"{_NYM5_POST_ROTATE_PROBE_RETRIES})"
++                  + ("" if probe_attempt >= _NYM5_POST_ROTATE_PROBE_RETRIES
++                     else " — rotating again rather than spending a full visit "
++                          "timeout on a likely-doomed gateway"))
++            if probe_attempt < _NYM5_POST_ROTATE_PROBE_RETRIES:
++                # Re-run just the disable/enable/--exit-random cycle, not the
++                # full disconnect/nftables/preamble sequence from step 1 —
++                # the tunnel and nftables state are already fine here; only
++                # the gateway assignment needs to change.
++                try:
++                    ssh_run(new_ssh, "nym-vpnc socks5 disable || true", check=False)
++                    time.sleep(1)
++                    ssh_run(
++                        new_ssh,
++                        "nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 "
++                        "--exit-random 2>/dev/null || true",
++                        check=False,
++                    )
++                except Exception as e:
++                    print(f"  [rotate-nym]  ssh dropped re-issuing --exit-random ({e}) — reconnecting")
++                    try:
++                        new_ssh.close()
++                    except Exception:
++                        pass
++                    new_ssh = retry_ssh_connect(client_cfg)
++                time.sleep(_NYM5_POST_ROTATE_PROBE_RETRY_SLEEP_S)
++        if not gateway_ok:
++            print(f"  [rotate-nym]  WARNING: gateway probe still failing after "
++                  f"{_NYM5_POST_ROTATE_PROBE_RETRIES} attempt(s) — continuing anyway "
++                  f"(visit-level retry classification is the backstop)")
++
+     # 6 — read status from the live tunnel (same dead-channel risk as 5b)
+     try:
+         status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || cat /tmp/nym_rotate.log 2>/dev/null || echo unknown", check=False)
+@@ -859,14 +933,67 @@
+ #     packets already captured (the zero-ingress guard never fires for
+ #     these), meaning the *previous* rotation succeeded and the listener
+ #     died after that — not a dead target.
+-#   - "NS_ERROR_CONNECTION_REFUSED" (without PROXY_): only 3/646, and each one
+-#     shows substantial ingress (981-1837 packets) AND non-trivial egress
+-#     bytes — the proxy was up and routing; this specific request was refused
+-#     at the destination/relay layer. Deliberately NOT classified as
+-#     wedge-class: requeuing these indefinitely would be retrying a failure
+-#     that has nothing to do with SOCKS5 health, exactly the "genuine
+-#     dead-site error" case that must not be requeued forever.
+-_SOCKS5_WEDGE_ERROR_MARKERS = ("NS_ERROR_PROXY_CONNECTION_REFUSED",)
++#   - "NS_ERROR_CONNECTION_REFUSED" (without PROXY_): only 3/646 in the
++#     aggregate 20h validation run, and each one showed substantial ingress
++#     (981-1837 packets) AND non-trivial egress bytes — the proxy was up and
++#     routing; that specific request was refused at the destination/relay
++#     layer. Originally deliberately NOT classified as wedge-class on that
++#     basis: requeuing these indefinitely would be retrying a failure that
++#     has nothing to do with SOCKS5 health, the "genuine dead-site error"
++#     case that must not be requeued forever.
++#
++# PROPOSED (2026-07-12, NOT YET APPLIED — see
++# patches/06_nym5_client2_retry_classification.md): a live-campaign audit of
++# nym5-client2 specifically (not the aggregate population above) found a very
++# different picture for that one client: plain Page.goto timeouts accounted
++# for ~45% of its failed visits and NS_ERROR_CONNECTION_REFUSED for ~9% —
++# both currently fall through this classifier untouched and permanently burn
++# the visit slot (see the `if healthy: ... except Exception` branch below,
++# and the wedge-aware loop in run_dataset that only requeues on a raised
++# SOCKS5WedgeError). Critically, 65.8% of client2's failures land on the
++# FIRST visit after a circuit rotation (vs. ~34% baseline for later visits
++# in the same circuit) — the signature of "freshly-rotated gateway hasn't
++# finished warming up yet", not "target site is actually down". That's
++# exactly the class of transient condition this retry mechanism exists to
++# paper over, so both markers below are added to the retry-eligible set.
++#
++# Two things to know before applying:
++#  1. is_socks5_wedge_error() is evaluated unconditionally for every mode's
++#     visit_status (see the call site further down), not gated to nym5 — so
++#     broadening these markers broadens retry-eligibility for tor/vpn/nym2
++#     too, not just nym5-client2. NS_ERROR_CONNECTION_REFUSED is Firefox/
++#     Playwright-specific (curl-driven binary visits never produce it), so
++#     that part is low-risk. The timeout marker is the one that generalizes
++#     furthest: for a genuinely dead/slow target site under tor or vpn
++#     (rather than a wedged gateway), this now costs up to
++#     WEDGE_MAX_RECOVERY_ATTEMPTS extra recovery cycles (each involving a
++#     nym-vpnc-style reconnect attempt via recover_wedged_client, ~40-90s)
++#     before falling through to the same terminal outcome it hit immediately
++#     before this patch. The current diagnosis is nym5-client2-specific and
++#     doesn't establish whether tor/vpn have the same rotation-adjacent
++#     pattern — if this proves costly for them in practice, scope the new
++#     markers to `mode in ("nym5", "nym2")` at the call site instead of
++#     broadening globally. Not done here since the live evidence only
++#     supports nym5 today.
++#  2. No new retry-cap constant is introduced. WEDGE_MAX_RECOVERY_ATTEMPTS
++#     (defined above, currently 2) already bounds every wedge-class cause —
++#     SOCKS5-refused, these two new markers, VM hangs, everything — to the
++#     same max-3-total-attempts-per-visit-slot ceiling, via the single
++#     `visit_attempt` counter in run_dataset's wedge-aware loop. A genuinely
++#     dead gateway still cannot loop forever under this patch; it just now
++#     gets the same bounded number of chances SOCKS5-refused already gets,
++#     rather than zero.
++_SOCKS5_WEDGE_ERROR_MARKERS = (
++    "NS_ERROR_PROXY_CONNECTION_REFUSED",
++    "NS_ERROR_CONNECTION_REFUSED",   # PROPOSED — see note above
++    "ms exceeded",                   # PROPOSED — Playwright's page.goto timeout
++                                      # message always ends "<N>ms exceeded."
++                                      # (e.g. "Page.goto: Timeout 180000ms
++                                      # exceeded."); confirmed live in
++                                      # round_03/nym5_visits.jsonl this exact
++                                      # string is what a plain nym5-client2
++                                      # timeout looks like today.
++)
+ 
+ 
+ def is_socks5_wedge_error(visit_status: str) -> bool:

@@ -44,6 +44,24 @@ mkdir -p "$CAMPAIGN_ROOT"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [campaign] $*"; }
 die() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [campaign] [ERROR] $*" >&2; exit 1; }
 
+# PROPOSED (2026-07-12, applying patches/10_nym5_instance_separation_design.md):
+# MODE_SCOPE=both|nym5|fast lets this script drive only one instance, so
+# nym5 and the vpn/tor/nym2 trio can run as two fully independent
+# instances (separate CAMPAIGN_ROOT, separate round-dir numbering,
+# separate .audit_passed markers) — neither waits on the other to close a
+# round anymore. Default "both" reproduces the exact previous behavior
+# unchanged (single-instance mode still works, e.g. for the one-time
+# round_03 transitional handling described in the design doc, or
+# manual/ad-hoc runs). Exported so run_stage.sh (which needs the same
+# value to separate nym5 from nym2 — they share the light grid) inherits
+# it automatically.
+MODE_SCOPE="${MODE_SCOPE:-both}"
+case "$MODE_SCOPE" in
+    both|nym5|fast) ;;
+    *) die "invalid MODE_SCOPE='$MODE_SCOPE' (expected both|nym5|fast)" ;;
+esac
+export MODE_SCOPE
+
 [[ -f "$VALIDATED_FULL" ]]  || die "full URLs file not found: $VALIDATED_FULL — run scripts/validate_urls.sh first"
 [[ -f "$VALIDATED_LIGHT" ]] || die "light URLs file not found: $VALIDATED_LIGHT"
 
@@ -61,8 +79,18 @@ python3 scripts/_stage_slices.py "$VALIDATED_FULL" "$VALIDATED_LIGHT" "$SLICE_DI
 n_full=$(find "$SLICE_DIR/full"  -maxdepth 1 -name 'stage_*.txt' 2>/dev/null | wc -l)
 n_tor=$(find  "$SLICE_DIR/tor"   -maxdepth 1 -name 'stage_*.txt' 2>/dev/null | wc -l)
 n_light=$(find "$SLICE_DIR/light" -maxdepth 1 -name 'stage_*.txt' 2>/dev/null | wc -l)
-n_rounds=$(( n_full > n_light ? n_full : n_light ))
-log "Full-list (vpn) stages: $n_full. Tor (full-minus-zip) stages: $n_tor. Light (nym5/nym2) stages: $n_light. Total rounds: $n_rounds"
+# PROPOSED: n_rounds is scoped to whichever grid(s) this instance actually
+# drives. nym5 only ever touches the light grid, so no reason to iterate
+# past its own 7 stages. "fast" touches full+tor+ (nym2's share of) light,
+# same as "both" — light naturally goes NONE once its 7 stages are
+# exhausted (see the per-round NONE-on-absence check below), so max() is
+# still correct there, not an overcount.
+case "$MODE_SCOPE" in
+    nym5) n_rounds=$n_light ;;
+    fast) n_rounds=$(( n_full > n_light ? n_full : n_light )) ;;
+    both) n_rounds=$(( n_full > n_light ? n_full : n_light )) ;;
+esac
+log "Full-list (vpn) stages: $n_full. Tor (full-minus-zip) stages: $n_tor. Light (nym5/nym2) stages: $n_light. Total rounds: $n_rounds (MODE_SCOPE=$MODE_SCOPE)"
 log "(full/tor share stage index; missing tor/stage_NN → tor=NONE that round. light is independent.)"
 
 for round in $(seq -w 1 "$n_rounds"); do
@@ -83,6 +111,19 @@ for round in $(seq -w 1 "$n_rounds"); do
     [[ -f "$full_stage" ]]                    || full_stage="NONE"
     [[ -f "$tor_stage" && -s "$tor_stage" ]]  || tor_stage="NONE"
     [[ -f "$light_stage" ]]                   || light_stage="NONE"
+    # PROPOSED: force full/tor to NONE for the nym5-only instance,
+    # regardless of file existence — without this it would also launch
+    # vpn/tor every round, since those stage files always exist once
+    # _stage_slices.py has run. The "fast" instance does NOT force
+    # light_stage to NONE here — nym2 needs it active (nym2 travels with
+    # vpn/tor, not with nym5, despite sharing the light URL grid); light
+    # naturally goes NONE on its own once exhausted (7 stages), same as
+    # any other grid, no forcing needed. Which client (nym5 vs nym2)
+    # actually launches when light IS active is decided by run_stage.sh's
+    # own MODE_SCOPE-driven client selection, not here.
+    if [[ "$MODE_SCOPE" == "nym5" ]]; then
+        full_stage="NONE"; tor_stage="NONE"
+    fi
 
     if [[ "$full_stage" == "NONE" && "$tor_stage" == "NONE" && "$light_stage" == "NONE" ]]; then
         log "Round $round: all grids exhausted, nothing to do — should not happen (n_rounds miscount?)"

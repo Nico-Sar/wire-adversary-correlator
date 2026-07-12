@@ -1,0 +1,165 @@
+--- scripts/campaign_heartbeat.py	2026-07-07 18:01:38.479030502 +0200
++++ /tmp/campaign_heartbeat.py.proposed	2026-07-12 10:46:34.904148781 +0200
+@@ -11,6 +11,21 @@
+   4. ingress/egress router unreachable via SSH                            — CRITICAL
+   5. a mode's success count frozen for STALL_CHECKS_FOR_ALERT checks      — non-critical
+   6. router rx_dropped/rx_missed counters increased since last check      — non-critical
++  7. a mode projected, at its observed recent rate, to miss LICENSE_DEADLINE — non-critical
++
++PROPOSED 2026-07-12 (see patches/05_heartbeat_deadline_projection.md) — not yet
++applied. Item 7 keeps a rolling window of (timestamp, mode_counts) samples in
++state["rate_history"], estimates successes/day per mode from the oldest
++sample still inside RATE_WINDOW_HOURS, and compares the rounds still needed
++for that mode's grid (full grid: vpn/tor, 11 stages; light grid: nym5/nym2,
++7 stages — counted from data/campaign/_url_slices/{full,light}/stage_*.txt
++rather than hardcoded, so it stays correct if the URL lists ever change)
++against what the observed rate can plausibly finish before LICENSE_DEADLINE.
++This is a coarse, early-warning signal (it does not model the shared-round
++barrier where vpn/tor/nym2 cannot close a round until nym5 does — see
++run_stage.sh's backfill-stop-file mechanism) — a clean projection here is
++reassuring, but a projected miss should be trusted well before a clean
++projection is.
+ 
+ Two email channels (this replaced a per-check-failure email design after it
+ produced one email per cron tick whenever the set of active issues changed —
+@@ -58,6 +73,22 @@
+ CRITICAL_REMIND_HOURS = 1    # re-email cadence for an UNCHANGED critical signature
+ DIGEST_INTERVAL_HOURS = 1    # routine "still alive" report cadence, sent regardless of state
+ 
++# ── Deadline projection (item 7) ────────────────────────────────────────────
++# Matches the deadline run_campaign.sh was launched with — update both if the
++# license is ever extended/shortened. Not read from run_campaign.sh's own
++# argv (it isn't recorded anywhere persistent); kept as an explicit constant
++# here instead of guessing.
++LICENSE_DEADLINE = "2026-07-19"
++RATE_WINDOW_HOURS = 48       # how far back to look for a rate estimate
++MIN_RATE_WINDOW_HOURS = 6    # don't project off a window shorter than this — too noisy
++# 2 clients x visits/client/URL x ~50 URLs/stage (see docs/CAMPAIGN_RUNBOOK.md
++# "Locked parameters"). Approximate on purpose — this is an early-warning
++# signal, not a scheduler; the real per-round count varies slightly with the
++# last stage's URL count and any backfill visits mixed into the same file.
++PER_ROUND_TARGET = {"vpn": 2500, "tor": 2500, "nym5": 4800, "nym2": 4800}
++FULL_GRID_MODES = ("vpn", "tor")
++LIGHT_GRID_MODES = ("nym5", "nym2")
++
+ # Dedicated, passphrase-free key — NOT ~/.ssh/nico-thesis. That key requires a
+ # passphrase normally supplied by an interactive ssh-agent session; cron has
+ # no access to that agent (no SSH_AUTH_SOCK), so every router check failed
+@@ -83,7 +114,8 @@
+         except Exception:
+             pass
+     return {"mode_counts": {}, "mode_stall": {}, "router_drops": {},
+-            "alerts_active": {}, "last_critical_sent": {}, "last_digest_sent": None}
++            "alerts_active": {}, "last_critical_sent": {}, "last_digest_sent": None,
++            "rate_history": []}
+ 
+ 
+ def save_state(state):
+@@ -120,6 +152,94 @@
+     return rounds[-1] if rounds else None
+ 
+ 
++def grid_round_total(grid_label):
++    """Counts stage_*.txt files for the given grid label ("full" or "light")
++    rather than hardcoding 11/7, so this stays correct if the URL lists are
++    ever regenerated with different counts."""
++    d = CAMPAIGN_ROOT / "_url_slices" / grid_label
++    if not d.exists():
++        return None
++    return len(list(d.glob("stage_*.txt")))
++
++
++def deadline_projections(state, mode_counts_now, round_dir):
++    """Returns a list of human-readable warning strings, one per mode
++    projected to miss LICENSE_DEADLINE at its observed recent rate. Also
++    mutates state["rate_history"] in place (caller is responsible for
++    save_state()). Pure best-effort: any missing input (no round dir yet,
++    grid files not found, deadline unparseable) just skips that mode/check
++    rather than raising.
++    """
++    warnings = []
++    now = now_utc()
++    try:
++        deadline = datetime.strptime(LICENSE_DEADLINE, "%Y-%m-%d").replace(tzinfo=timezone.utc)
++    except ValueError:
++        return warnings  # misconfigured constant — don't crash the heartbeat over it
++    days_left = (deadline - now).total_seconds() / 86400.0
++
++    history = state.get("rate_history", [])
++    history.append({"ts": now.isoformat(), "mode_counts": dict(mode_counts_now)})
++    cutoff = now.timestamp() - RATE_WINDOW_HOURS * 3600
++    history = [h for h in history
++               if datetime.fromisoformat(h["ts"]).timestamp() >= cutoff]
++    state["rate_history"] = history
++
++    if round_dir is None or days_left <= 0:
++        return warnings
++    try:
++        current_round = int(round_dir.name.removeprefix("round_"))
++    except ValueError:
++        return warnings
++
++    oldest = history[0]
++    oldest_ts = datetime.fromisoformat(oldest["ts"])
++    window_hours = (now - oldest_ts).total_seconds() / 3600.0
++    if window_hours < MIN_RATE_WINDOW_HOURS:
++        return warnings  # not enough history yet for a stable estimate
++
++    for mode in ("vpn", "tor", "nym5", "nym2"):
++        grid_label = "full" if mode in FULL_GRID_MODES else "light"
++        total_rounds = grid_round_total(grid_label)
++        if total_rounds is None:
++            continue
++        rounds_remaining = total_rounds - current_round
++        if rounds_remaining <= 0:
++            continue  # already at/past this mode's last round
++
++        now_count = mode_counts_now.get(mode)
++        old_count = oldest["mode_counts"].get(mode)
++        if now_count is None or old_count is None or now_count < old_count:
++            continue  # no data, or round rolled over mid-window — skip rather than guess
++        rate_per_day = (now_count - old_count) / (window_hours / 24.0)
++        target = PER_ROUND_TARGET.get(mode)
++        if not target or rate_per_day <= 0:
++            continue
++        rounds_per_day = rate_per_day / target
++        projectable_rounds = rounds_per_day * days_left
++
++        if projectable_rounds < rounds_remaining:
++            days_needed = rounds_remaining / rounds_per_day if rounds_per_day > 0 else float("inf")
++            # CAVEAT (only nym5 has no backfill): vpn/tor/nym2's success count
++            # keeps climbing from backfill visits even while the round itself
++            # is stalled waiting on nym5 (run_stage.sh's shared round-barrier
++            # — see run_stage.sh's backfill-stop-file mechanism). Their rate
++            # here can look healthy/fast while real round progress is zero.
++            # nym5 has no backfill loop, so ITS rate is the trustworthy signal
++            # for when the round actually closes.
++            caveat = ("" if mode == "nym5" else
++                      " [rate may include backfill visits and can look faster "
++                      "than real round progress — cross-check against nym5's "
++                      "own projection, which drives when rounds actually close]")
++            warnings.append(
++                f"{mode}: projected to MISS {LICENSE_DEADLINE} — needs {rounds_remaining} "
++                f"more round(s), observed rate ~{rate_per_day:.0f} successes/day "
++                f"(~{rounds_per_day:.2f} rounds/day) would take ~{days_needed:.1f} day(s), "
++                f"only {days_left:.1f} day(s) remain{caveat}"
++            )
++    return warnings
++
++
+ def campaign_complete():
+     """True if any tee'd campaign log shows the final 'all rounds passed' banner."""
+     candidates = list(REPO_ROOT.glob("campaign_round*.log")) + list(Path("/tmp").glob("campaign_round*.log"))
+@@ -246,6 +366,12 @@
+             except Exception:
+                 pass
+ 
++    # 7. Deadline projection — non-critical (digest only). Runs even when
++    #    `complete` is True is unnecessary (nothing left to project), but
++    #    otherwise runs every check to keep rate_history populated.
++    if not complete:
++        noncritical.extend(deadline_projections(state, mode_counts_now, round_dir))
++
+     state["mode_counts"] = mode_counts_now
+     state["mode_stall"] = new_stall
+     state["router_drops"] = new_drop_state

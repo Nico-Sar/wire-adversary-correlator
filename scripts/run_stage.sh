@@ -30,6 +30,16 @@
 # Exit code: 0 if all launched client processes completed (their own
 # visit_status may still include errors/wedges — audit_stage.sh's job).
 # Non-zero if the stage could not be launched at all.
+#
+# Instance separation (2026-07-12, see patches/10_nym5_instance_separation_design.md):
+# MODE_SCOPE=both|nym5|fast (env var, default "both" = exact previous
+# behavior). Needed because the light URL grid drives BOTH nym5 and nym2
+# clients — run_campaign.sh forcing full/tor stage args to "NONE" is
+# enough to keep vpn/tor out of a nym5-only instance, but nym5 and nym2
+# can't be told apart by grid alone, only by this flag. "nym5" launches
+# only nym5-client1/2 when light is active; "fast" launches only
+# nym2-client1/2 when light is active (alongside vpn/tor). Also scopes the
+# stage_meta filename — see the comment at that write site.
 
 set -uo pipefail   # no -e: one client's failure must not kill the others
 
@@ -44,7 +54,6 @@ VISITS_LIGHT="${VISITS_LIGHT:-}"   # no safe default — see header comment
 # FULL_URLS when called without this env var (backward compat, manual runs).
 TOR_URLS="${TOR_URLS:-$FULL_URLS}"
 ROTATE_EVERY_NYM=3
-BACKFILL="${BACKFILL:-0}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/nico-thesis}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
 INGRESS_IP="204.168.184.30"
@@ -59,6 +68,20 @@ COORDINATOR_PYTHON="${COORDINATOR_PYTHON:-$REPO_ROOT/.venv/bin/python3}"
 
 log() { echo "[$(date '+%H:%M:%S')] [$LABEL] $*"; }
 die() { echo "[$(date '+%H:%M:%S')] [$LABEL] [ERROR] $*" >&2; exit 1; }
+
+# PROPOSED (2026-07-12, applying patches/10_nym5_instance_separation_design.md):
+# the light URL grid drives BOTH nym5 and nym2 clients — RUN_LIGHT alone
+# can't tell them apart. MODE_SCOPE splits them explicitly: "nym5" launches
+# only nym5-client1/2 when light is active (never nym2); "fast" launches
+# only nym2-client1/2 when light is active (never nym5), alongside
+# vpn/tor. Default "both" reproduces the exact previous behavior (all
+# clients whose grid is active get launched) — matches run_campaign.sh's
+# own default and keeps direct/manual invocations of this script unchanged.
+MODE_SCOPE="${MODE_SCOPE:-both}"
+case "$MODE_SCOPE" in
+    both|nym5|fast) ;;
+    *) die "invalid MODE_SCOPE='$MODE_SCOPE' (expected both|nym5|fast)" ;;
+esac
 
 [[ -x "$COORDINATOR_PYTHON" ]] \
     || die "venv python not found/executable: $COORDINATOR_PYTHON — collector.coordinator requires the project venv (paramiko, etc.), not system python3"
@@ -169,9 +192,16 @@ ensure_client_reachable() {
 }
 
 CANDIDATES=()
-(( RUN_FULL ))  && CANDIDATES+=(vpn-client1 vpn-client2)
-(( RUN_TOR ))   && CANDIDATES+=(tor-client1 tor-client2)
-(( RUN_LIGHT )) && CANDIDATES+=(nym5-client1 nym5-client2 nym2-client1 nym2-client2)
+if [[ "$MODE_SCOPE" != "nym5" ]]; then
+    (( RUN_FULL ))  && CANDIDATES+=(vpn-client1 vpn-client2)
+    (( RUN_TOR ))   && CANDIDATES+=(tor-client1 tor-client2)
+fi
+if [[ "$MODE_SCOPE" != "fast" ]]; then
+    (( RUN_LIGHT )) && CANDIDATES+=(nym5-client1 nym5-client2)
+fi
+if [[ "$MODE_SCOPE" != "nym5" ]]; then
+    (( RUN_LIGHT )) && CANDIDATES+=(nym2-client1 nym2-client2)
+fi
 
 REACHABLE=()
 SKIPPED=()
@@ -208,81 +238,49 @@ launch_client() {
 
 is_reachable() { printf '%s\n' "${REACHABLE[@]}" | grep -qx "$1"; }
 
-# ── 3b. Backfill setup (BACKFILL=1 only) ──────────────────────────────────────
-# nym5 is consistently the slowest mode (Sphinx mixnet latency). Once a
-# faster mode (vpn/tor/nym2) exhausts its own primary --visits budget, it
-# keeps collecting extra bonus visits rather than sitting idle, stopping the
-# moment nym5 finishes. vpn/tor backfill against the subset of their URLs
-# shared with the light list (falling back to their full stage list if there's
-# no intersection); nym2 already collects against the light list directly, so
-# it just cycles that same list again — no intersection needed.
-BACKFILL_STOP="$OUTPUT/backfill_stop"
-rm -f "$BACKFILL_STOP"
-VPN_BF_ARGS=(); TOR_BF_ARGS=()
-if (( BACKFILL && RUN_FULL && RUN_LIGHT )); then
-    BACKFILL_VPN_URLS="$OUTPUT/_backfill_vpn_urls.txt"
-    comm -12 <(sort "$FULL_URLS") <(sort "$LIGHT_URLS") > "$BACKFILL_VPN_URLS" 2>/dev/null || true
-    if [[ ! -s "$BACKFILL_VPN_URLS" ]]; then
-        cp "$FULL_URLS" "$BACKFILL_VPN_URLS"
-        log "backfill vpn: no intersection with light list — falling back to full stage URLs"
-    fi
-    VPN_BF_ARGS=(--backfill-urls "$BACKFILL_VPN_URLS" --backfill-stop-file "$BACKFILL_STOP")
-    log "backfill vpn: $(wc -l < "$BACKFILL_VPN_URLS" | tr -d ' ') shared URL(s) → $BACKFILL_VPN_URLS"
-fi
-if (( BACKFILL && RUN_TOR && RUN_LIGHT )); then
-    BACKFILL_TOR_URLS="$OUTPUT/_backfill_tor_urls.txt"
-    comm -12 <(sort "$TOR_URLS") <(sort "$LIGHT_URLS") > "$BACKFILL_TOR_URLS" 2>/dev/null || true
-    if [[ ! -s "$BACKFILL_TOR_URLS" ]]; then
-        cp "$TOR_URLS" "$BACKFILL_TOR_URLS"
-        log "backfill tor: no intersection with light list — falling back to tor stage URLs"
-    fi
-    TOR_BF_ARGS=(--backfill-urls "$BACKFILL_TOR_URLS" --backfill-stop-file "$BACKFILL_STOP")
-    log "backfill tor: $(wc -l < "$BACKFILL_TOR_URLS" | tr -d ' ') shared URL(s) → $BACKFILL_TOR_URLS"
-fi
-# nym2 already collects against LIGHT_URLS directly (same list nym5 uses) —
-# no intersection needed, it just cycles the same list again once its own
-# primary budget is done, same as vpn/tor, stopping when nym5 finishes.
-NYM2_BF_ARGS=()
-if (( BACKFILL && RUN_LIGHT )); then
-    NYM2_BF_ARGS=(--backfill-urls "$LIGHT_URLS" --backfill-stop-file "$BACKFILL_STOP")
-    log "backfill nym2: cycling light list directly → $LIGHT_URLS"
-fi
+# REMOVED (2026-07-12, applying patches/10_nym5_instance_separation_design.md):
+# the backfill subsystem (§3b setup, §3c stop-file monitor, and the
+# --backfill-urls/--backfill-stop-file args below) existed only to keep
+# vpn/tor/nym2 busy while trapped waiting on nym5 within one shared round.
+# Now that nym5 runs as its own independent instance (MODE_SCOPE), no mode
+# ever waits on another to close a round, so there's nothing left to fill
+# time with — deleted rather than adapted. coordinator.py's own
+# --backfill-urls/--backfill-stop-file handling is untouched (out of scope
+# for this pass) but is now simply never invoked from here again.
 
 log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- vpn=$RUN_FULL tor=$RUN_TOR light=$RUN_LIGHT"
-is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL" "${VPN_BF_ARGS[@]}"
-is_reachable vpn-client2  && (( RUN_FULL )) && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL" "${VPN_BF_ARGS[@]}"
-is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits "${TOR_BF_ARGS[@]}"
-is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits "${TOR_BF_ARGS[@]}"
+is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL"
+is_reachable vpn-client2  && (( RUN_FULL )) && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL"
+is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
+is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
 is_reachable nym5-client1 && launch_client nym5-client1 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM" "${NYM2_BF_ARGS[@]}"
-is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM" "${NYM2_BF_ARGS[@]}"
+is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
 
-# ── 3c. Backfill stop-file monitor ────────────────────────────────────────────
-# When BACKFILL=1 and nym5 clients were launched, watch their PIDs in a
-# background subshell. Once every nym5 PID exits, touch the stop file so
-# coordinator.py's backfill loop terminates. If no nym5 client launched,
-# create the stop file immediately (nothing to wait for).
-BACKFILL_MONITOR_PID=0
-if (( BACKFILL && RUN_LIGHT )); then
-    NYM5_PIDS=()
-    for _c in nym5-client1 nym5-client2; do
-        [[ -v PIDS[$_c] ]] && NYM5_PIDS+=("${PIDS[$_c]}")
-    done
-    if (( ${#NYM5_PIDS[@]} > 0 )); then
-        (
-            for _pid in "${NYM5_PIDS[@]}"; do
-                while kill -0 "$_pid" 2>/dev/null; do sleep 30; done
-            done
-            touch "$BACKFILL_STOP"
-        ) &
-        BACKFILL_MONITOR_PID=$!
-        log "backfill monitor started (watching nym5 PIDs: ${NYM5_PIDS[*]})"
-    else
-        log "backfill: no nym5 clients launched — creating stop file immediately"
-        touch "$BACKFILL_STOP"
-    fi
-fi
+# REMOVED (2026-07-12): §3c backfill stop-file monitor — see the note at
+# the launch step above for why the whole subsystem is gone, not adapted.
+
+# PROPOSED (2026-07-12, applying patches/10_nym5_instance_separation_design.md):
+# stage_meta.txt is now named by MODE_SCOPE (the actual instance identity),
+# not re-derived from RUN_FULL/RUN_TOR/RUN_LIGHT — those three no longer
+# map cleanly onto "which instance" once nym2 travels with the fast
+# instance despite sharing RUN_LIGHT with nym5 (e.g. a "fast" round where
+# vpn/tor have exhausted but nym2 is still going would have RUN_FULL=0,
+# RUN_TOR=0, RUN_LIGHT=1 — indistinguishable from a real nym5-only round
+# by grid flags alone). This matters for exactly one situation: the
+# one-time round_03 transitional window where both new instances briefly
+# write into the same existing round_03 directory — with a single fixed
+# filename, whichever invocation finished last would silently clobber the
+# other's launch record. Every future round lives in a separate
+# campaign_root per instance, where only one of these filenames will ever
+# be written, so this has no effect there beyond the (harmless) renaming.
+# audit_stage.sh reads all stage_meta*.txt files present and merges them.
+case "$MODE_SCOPE" in
+    nym5) META_FILE="$OUTPUT/stage_meta_light.txt" ;;
+    fast) META_FILE="$OUTPUT/stage_meta_full.txt" ;;
+    both) META_FILE="$OUTPUT/stage_meta.txt" ;;   # old-style combined invocation, unchanged name
+esac
 
 launched_clients="${!PIDS[*]}"
 {
@@ -293,7 +291,7 @@ launched_clients="${!PIDS[*]}"
     echo "launched=${launched_clients:-none}"
     echo "skipped=${SKIPPED[*]:-none}"
     for c in "${!PIDS[@]}"; do echo "pid_$c=${PIDS[$c]}"; done
-} > "$OUTPUT/stage_meta.txt"
+} > "$META_FILE"
 
 log "Waiting for all launched clients to finish..."
 FAILED_CLIENTS=()
@@ -304,10 +302,9 @@ for client_id in "${!PIDS[@]}"; do
     fi
 done
 
-echo "failed=${FAILED_CLIENTS[*]:-none}" >> "$OUTPUT/stage_meta.txt"
+echo "failed=${FAILED_CLIENTS[*]:-none}" >> "$META_FILE"
 
 kill "$DROP_MONITOR_PID" 2>/dev/null || true
-[[ "$BACKFILL_MONITOR_PID" -gt 0 ]] && kill "$BACKFILL_MONITOR_PID" 2>/dev/null || true
 
 log "Stage done. Launched: ${#REACHABLE[@]}  Skipped: ${#SKIPPED[@]}  Process-failed: ${#FAILED_CLIENTS[@]}"
 if [[ ${#SKIPPED[@]} -gt 0 || ${#FAILED_CLIENTS[@]} -gt 0 ]]; then

@@ -46,20 +46,36 @@ declare -A CLIENT_PRIVATE_IP=(
 # "no log found" / "0 visits" without ever flagging.
 echo ""
 echo "--- 0. Launch sanity (tracebacks / module errors / process failures) ---"
-META_FILE="$STAGE_DIR/stage_meta.txt"
+# Instance separation (2026-07-12, patches/10_nym5_instance_separation_design.md):
+# run_stage.sh now names this file stage_meta_light.txt / stage_meta_full.txt
+# when scoped to one grid, or the original stage_meta.txt for an
+# old-style/combined invocation. Read whichever are present and merge —
+# this is only ever more than one file for the one-time round_03
+# transitional round, where the new nym5-only and fast-mode instances both
+# briefly wrote into the same existing directory; every round after that
+# lives in a separate campaign_root per instance and has exactly one.
 FULL_URLS_VAL="NONE"; TOR_URLS_VAL="NONE"; LIGHT_URLS_VAL="NONE"; FAILED_LIST=""
-if [[ -f "$META_FILE" ]]; then
-    FULL_URLS_VAL=$(grep '^full_urls=' "$META_FILE" | cut -d= -f2-)
-    TOR_URLS_VAL=$(grep '^tor_urls=' "$META_FILE" | cut -d= -f2-)
-    LIGHT_URLS_VAL=$(grep '^light_urls=' "$META_FILE" | cut -d= -f2-)
+found_meta=0
+for META_FILE in "$STAGE_DIR"/stage_meta*.txt; do
+    [[ -f "$META_FILE" ]] || continue
+    found_meta=1
+    f=$(grep '^full_urls=' "$META_FILE" | cut -d= -f2-)
+    t=$(grep '^tor_urls=' "$META_FILE" | cut -d= -f2-)
+    l=$(grep '^light_urls=' "$META_FILE" | cut -d= -f2-)
     # backward compat: old stage_meta.txt has no tor_urls line (pre-zip-filter)
-    [[ -n "$TOR_URLS_VAL" ]] || TOR_URLS_VAL="$FULL_URLS_VAL"
-    FAILED_LIST=$(grep '^failed=' "$META_FILE" | cut -d= -f2-)
-    if [[ -n "$FAILED_LIST" && "$FAILED_LIST" != "none" ]]; then
-        flag "coordinator process(es) exited non-zero: $FAILED_LIST"
+    [[ -n "$t" ]] || t="$f"
+    [[ -n "$f" && "$f" != "NONE" ]] && FULL_URLS_VAL="$f"
+    [[ -n "$t" && "$t" != "NONE" ]] && TOR_URLS_VAL="$t"
+    [[ -n "$l" && "$l" != "NONE" ]] && LIGHT_URLS_VAL="$l"
+    fl=$(grep '^failed=' "$META_FILE" | cut -d= -f2-)
+    if [[ -n "$fl" && "$fl" != "none" ]]; then
+        FAILED_LIST="${FAILED_LIST:+$FAILED_LIST }$fl"
     fi
-else
-    flag "no stage_meta.txt found in $STAGE_DIR — run_stage.sh did not record a launch; cannot verify what (if anything) ran"
+done
+if [[ "$found_meta" -eq 0 ]]; then
+    flag "no stage_meta*.txt found in $STAGE_DIR — run_stage.sh did not record a launch; cannot verify what (if anything) ran"
+elif [[ -n "$FAILED_LIST" ]]; then
+    flag "coordinator process(es) exited non-zero: $FAILED_LIST"
 fi
 sec0_ok=1
 for log in "$STAGE_DIR"/log_*.txt; do

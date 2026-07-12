@@ -1,0 +1,122 @@
+--- collector/coordinator.py
++++ /tmp/coordinator.py.proposed_task9
+@@ -111,6 +111,47 @@
+ 
+ 
+ # PROPOSED (2026-07-12, NOT YET APPLIED — see
++# patches/09_nym_watchdog_mode_aware.md): nym_watchdog.sh (deployed
++# separately on each nym VM, see scripts/nym_watchdog.sh) is supposed to
++# back off from reconnecting a client's tunnel while /tmp/nym_collection_active
++# is present — that lock exists specifically so the watchdog never fights a
++# visit in progress. coordinator.py's run_single_visit() already
++# touches/removes this lock around the actual capture window, but
++# recover_wedged_client() — the function patch 06's broadened retry
++# classification requeues through — never touched it at all. Confirmed
++# live (2026-07-12): the lock is released at the END of run_single_visit,
++# BEFORE the SOCKS5-wedge exception that triggers recover_wedged_client is
++# even raised, so the entire wedge-recovery window (which itself does its
++# own nym-vpnc reconnect in Tier 1a) ran completely unprotected — free for
++# nym_watchdog.sh to independently detect "not connected" mid-recovery and
++# fire its own competing reconnect at the same time. Two independent
++# processes reconnecting the same tunnel concurrently is exactly the kind
++# of race that can leave it in an inconsistent state.
++def _set_nym_collection_lock(client_cfg: dict, active: bool) -> None:
++    """
++    Best-effort touch/remove of /tmp/nym_collection_active via its own
++    short-lived SSH connection — deliberately independent of whatever
++    connection state recover_wedged_client's own tiers are juggling
++    internally (that function opens/closes/reopens several connections
++    across its 3 tiers; piggybacking the lock on any one of them would tie
++    its lifetime to a connection that may not outlive the whole recovery).
++    Single-shot, no retry: this narrows the race window, it does not need
++    to be a hard guarantee, and must never itself become a new failure mode
++    (in particular, must never raise and abort a recovery attempt).
++    """
++    cmd = "touch /tmp/nym_collection_active" if active else "rm -f /tmp/nym_collection_active"
++    try:
++        ssh = ssh_connect(client_cfg)
++        try:
++            ssh_run(ssh, cmd, check=False)
++        finally:
++            ssh.close()
++    except Exception as e:
++        print(f"  [wedge-recovery] lock {'set' if active else 'clear'} failed "
++              f"(best-effort, continuing): {e}")
++
++
++# PROPOSED (2026-07-12, NOT YET APPLIED — see
+ # patches/07_tor_client1_router_ssh_reconnect.md): ingress_ssh/egress_ssh are
+ # opened once at the top of run_dataset() and, unlike client_ssh, were never
+ # re-checked or reconnected afterward — see the client_ssh transport check at
+@@ -1204,6 +1245,27 @@
+ 
+ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
+     """
++    PROPOSED (2026-07-12, NOT YET APPLIED — see
++    patches/09_nym_watchdog_mode_aware.md): thin wrapper around
++    _recover_wedged_client_impl() (all actual recovery logic, unchanged —
++    see its docstring) that holds /tmp/nym_collection_active for the
++    duration of recovery on nym5/nym2, via _set_nym_collection_lock(), so
++    nym_watchdog.sh backs off instead of racing this function's own Tier 1a
++    nym-vpnc reconnect. try/finally guarantees the lock is cleared
++    regardless of which of the impl's several return points was hit, or
++    whether it raised.
++    """
++    if mode in ("nym5", "nym2"):
++        _set_nym_collection_lock(client_cfg, True)
++    try:
++        return _recover_wedged_client_impl(client_id, client_cfg, mode)
++    finally:
++        if mode in ("nym5", "nym2"):
++            _set_nym_collection_lock(client_cfg, False)
++
++
++def _recover_wedged_client_impl(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
++    """
+     Three-tier recovery escalation. Each tier is only reached if the previous
+     one failed — hcloud reset is the last resort, not the first.
+ 
+@@ -1224,6 +1286,10 @@
+ 
+     Returns (recovered, method, new_client_ssh). new_client_ssh is None if
+     recovery failed — callers must not assume the old client_ssh is usable.
++
++    Called only via recover_wedged_client() above, which holds the
++    nym-watchdog collection lock around this call — do not call this
++    function directly for nym5/nym2.
+     """
+     host = client_cfg["host"]
+ 
+@@ -1436,17 +1502,27 @@
+     bpf_out = BPF_EGRESS[mode]
+     tun1_ip = ""
+ 
++    # ── Step -1: Acquire collection lock (nym modes only), BEFORE rotation ──
++    # PROPOSED (2026-07-12, NOT YET APPLIED — see
++    # patches/09_nym_watchdog_mode_aware.md): moved earlier than before
++    # (previously acquired only after rotation, as "Step 0b"). Closes a gap
++    # where nym_watchdog.sh could race maybe_rotate_circuit()'s own nym-vpnc
++    # reconnect the same way it could race recover_wedged_client()'s — see
++    # that function's own patch note for the same race, discovered via
++    # nym5-client2 repeatedly coming back in the wrong tunnel mode. Uses the
++    # CURRENT client_ssh (about to be replaced by rotate_circuit_nym for nym
++    # modes) — the lock file persists on the VM's filesystem regardless of
++    # which SSH session touched it, so touching it here before the old
++    # connection closes is safe.
++    if mode in ("nym5", "nym2"):
++        ssh_run(client_ssh, "touch /tmp/nym_collection_active", check=False)
++
+     # ── Step 0: Rotate circuit (Tor NEWNYM / Nym reconnect) ───────────────
+     # For nym modes, rotate_circuit_nym closes client_ssh and returns a new one.
+     circuit_info, client_ssh = maybe_rotate_circuit(
+         client_ssh, client_cfg or {}, mode, rotate_circuits, client_id
+     )
+ 
+-    # ── Step 0b: Acquire collection lock (nym modes only) ─────────────────
+-    # Prevents the nym_watchdog.service from reconnecting mid-visit.
+-    if mode in ("nym5", "nym2"):
+-        ssh_run(client_ssh, "touch /tmp/nym_collection_active", check=False)
+-
+     # ── Step 0c: nym2 — log tun1 IP for debugging ─────────────────────────
+     # BPF captures outer WireGuard UDP from the static physical IPs — no
+     # dynamic tun1 IP needed for filtering. We still query and log it so

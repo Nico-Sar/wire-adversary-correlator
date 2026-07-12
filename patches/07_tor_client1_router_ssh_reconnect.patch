@@ -1,0 +1,141 @@
+--- collector/coordinator.py
++++ /tmp/coordinator.py.proposed_task2
+@@ -110,6 +110,67 @@
+     ) from last_exc
+ 
+ 
++# PROPOSED (2026-07-12, NOT YET APPLIED — see
++# patches/07_tor_client1_router_ssh_reconnect.md): ingress_ssh/egress_ssh are
++# opened once at the top of run_dataset() and, unlike client_ssh, were never
++# re-checked or reconnected afterward — see the client_ssh transport check at
++# the top of run_dataset's wedge-aware loop for the pattern this mirrors. A
++# dropped router SSH session (confirmed live on tor-client1's backfill runs:
++# ingress/egress captures started failing and never recovered for the rest
++# of the run) permanently fails every subsequent start_remote_capture() call
++# on that router — see start_ingress()/start_egress()'s ingress_err_box/
++# egress_err_box handling in run_single_visit, which downgrades every visit
++# to "skipped_tshark_failed" with no path back to a working session.
++#
++# Deliberately NOT routed through recover_wedged_client()/
++# WEDGE_MAX_RECOVERY_ATTEMPTS like client_ssh's own reconnect is: that tier
++# system's Tier 1a/1b/2 escalation (nym-vpnc reconnect, service restart,
++# hcloud reset) is about recovering one CLIENT VM, and doesn't apply to a
++# router. A dead router also isn't like a dead client — every client sharing
++# that router is blocked, not just one — so unlike a wedged client (where
++# giving up on one visit and moving to the next at least makes forward
++# progress elsewhere), giving up here wouldn't route around the problem;
++# every subsequent visit would fail identically until the router comes back.
++# ensure_router_ssh() therefore blocks (with a bounded backoff and one loud
++# alert) rather than exhausting a fixed attempt count and marking visits
++# lost — see its two call sites in run_dataset's primary and backfill loops.
++_ROUTER_SSH_RECONNECT_MAX_ATTEMPTS = 3    # each internally retries 5x/15s via retry_ssh_connect
++_ROUTER_SSH_RECONNECT_BACKOFF_S    = 30   # between rounds of _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS
++_ROUTER_SSH_DOWN_POLL_S            = 60   # sleep between blocking retries once alerted
++
++
++def ensure_router_ssh(ssh_client: paramiko.SSHClient, router_cfg: dict,
++                       label: str) -> paramiko.SSHClient:
++    """
++    Mirrors the transport-liveness check client_ssh already gets in
++    run_dataset's wedge-aware loop, applied to a router's SSH handle.
++    Returns a live SSHClient — the same one if its transport is still active,
++    a fresh one (via retry_ssh_connect, which has its own internal 5x/15s
++    retry) otherwise. Raises after _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS bounded
++    rounds if the router is still unreachable — callers must not swallow
++    this silently (see the "why not recover_wedged_client" note above): a
++    dead router forecloses collection for every client sharing it.
++    """
++    if ssh_client.get_transport() and ssh_client.get_transport().is_active():
++        return ssh_client
++    last_err: Exception | None = None
++    for attempt in range(1, _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS + 1):
++        print(f"  [router-ssh] {label} router SSH session dropped — reconnect "
++              f"attempt {attempt}/{_ROUTER_SSH_RECONNECT_MAX_ATTEMPTS}")
++        try:
++            new_ssh = retry_ssh_connect(router_cfg)
++            print(f"  [router-ssh] {label} router SSH reconnected")
++            return new_ssh
++        except Exception as e:
++            last_err = e
++            if attempt < _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS:
++                time.sleep(_ROUTER_SSH_RECONNECT_BACKOFF_S)
++    raise RuntimeError(
++        f"{label} router SSH unreachable after {_ROUTER_SSH_RECONNECT_MAX_ATTEMPTS} "
++        f"reconnect rounds: {last_err}"
++    )
++
++
+ def ssh_run(client: paramiko.SSHClient, cmd: str, check=True,
+             timeout: float = DEFAULT_SSH_EXEC_TIMEOUT_S) -> str:
+     """
+@@ -1590,6 +1651,7 @@
+         zero_success_alert_active = False   # avoid re-alerting every visit while still breached
+         recent_outcomes: deque[bool] = deque(maxlen=SUCCESS_RATE_ALERT_WINDOW_N)
+         success_rate_alert_active = False
++        router_down_alert_active = False    # PROPOSED — same one-alert-per-outage pattern
+ 
+         for url in urls:
+             for visit_num in range(visits_per_url):
+@@ -1627,6 +1689,32 @@
+ 
+                     healthy = False
+                     wedge_reason = None
++
++                    # PROPOSED — see ensure_router_ssh()'s docstring/comment
++                    # for why this blocks-with-backoff instead of routing
++                    # through the client wedge counter below: a dead router
++                    # blocks every client sharing it, not just this one.
++                    try:
++                        ingress_ssh = ensure_router_ssh(ingress_ssh, INGRESS_ROUTER, "ingress")
++                        egress_ssh  = ensure_router_ssh(egress_ssh,  EGRESS_ROUTER,  "egress")
++                        if router_down_alert_active:
++                            print(f"  [router-ssh] router SSH recovered — resuming {client_id}")
++                            router_down_alert_active = False
++                    except Exception as e:
++                        if not router_down_alert_active:
++                            fire_alert(
++                                output_dir,
++                                f"{client_id} ({mode}): router SSH unreachable ({e}) — "
++                                f"this blocks ALL clients on this router, not just "
++                                f"{client_id}. Blocking and retrying every "
++                                f"{_ROUTER_SSH_DOWN_POLL_S}s until it recovers "
++                                f"(this alert will not repeat until it does).",
++                            )
++                            router_down_alert_active = True
++                        time.sleep(_ROUTER_SSH_DOWN_POLL_S)
++                        visit_attempt -= 1   # this attempt never actually ran
++                        continue
++
+                     if not (client_ssh.get_transport() and client_ssh.get_transport().is_active()):
+                         # A dead transport here means SSH is unreachable right
+                         # now — exactly what the wedge loop below exists to
+@@ -1837,6 +1925,29 @@
+                             visit_attempt += 1
+                             healthy = False
+                             wedge_reason = None
++
++                            # PROPOSED — mirrors the primary loop's router
++                            # check above; see ensure_router_ssh().
++                            try:
++                                ingress_ssh = ensure_router_ssh(ingress_ssh, INGRESS_ROUTER, "ingress")
++                                egress_ssh  = ensure_router_ssh(egress_ssh,  EGRESS_ROUTER,  "egress")
++                                if router_down_alert_active:
++                                    print(f"  [router-ssh] router SSH recovered — resuming {client_id} backfill")
++                                    router_down_alert_active = False
++                            except Exception as e:
++                                if not router_down_alert_active:
++                                    fire_alert(
++                                        output_dir,
++                                        f"{client_id} ({mode}) backfill: router SSH unreachable "
++                                        f"({e}) — blocking and retrying every "
++                                        f"{_ROUTER_SSH_DOWN_POLL_S}s until it recovers "
++                                        f"(this alert will not repeat until it does).",
++                                    )
++                                    router_down_alert_active = True
++                                time.sleep(_ROUTER_SSH_DOWN_POLL_S)
++                                visit_attempt -= 1
++                                continue
++
+                             if not (client_ssh.get_transport() and
+                                     client_ssh.get_transport().is_active()):
+                                 try:

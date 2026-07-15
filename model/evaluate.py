@@ -8,7 +8,7 @@ Outputs:
   - ROC-AUC (secondary)
   - Precision-Recall curve plot
   - Confusion matrix at threshold 0.5
-  - Per-system comparison table (Nym vs Tor vs VPN vs Baseline)
+  - Per-system comparison table (Nym vs Tor vs VPN)
 
 Usage:
   python evaluate.py --model results/nym_best.pt --dataset data/nym_dataset.npz

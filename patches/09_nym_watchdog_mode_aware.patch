@@ -1,0 +1,360 @@
+--- collector/coordinator.py
++++ /tmp/coordinator.py.proposed_task9
+@@ -111,6 +111,47 @@
+ 
+ 
+ # PROPOSED (2026-07-12, NOT YET APPLIED — see
++# patches/09_nym_watchdog_mode_aware.md): nym_watchdog.sh (deployed
++# separately on each nym VM, see scripts/nym_watchdog.sh) is supposed to
++# back off from reconnecting a client's tunnel while /tmp/nym_collection_active
++# is present — that lock exists specifically so the watchdog never fights a
++# visit in progress. coordinator.py's run_single_visit() already
++# touches/removes this lock around the actual capture window, but
++# recover_wedged_client() — the function patch 06's broadened retry
++# classification requeues through — never touched it at all. Confirmed
++# live (2026-07-12): the lock is released at the END of run_single_visit,
++# BEFORE the SOCKS5-wedge exception that triggers recover_wedged_client is
++# even raised, so the entire wedge-recovery window (which itself does its
++# own nym-vpnc reconnect in Tier 1a) ran completely unprotected — free for
++# nym_watchdog.sh to independently detect "not connected" mid-recovery and
++# fire its own competing reconnect at the same time. Two independent
++# processes reconnecting the same tunnel concurrently is exactly the kind
++# of race that can leave it in an inconsistent state.
++def _set_nym_collection_lock(client_cfg: dict, active: bool) -> None:
++    """
++    Best-effort touch/remove of /tmp/nym_collection_active via its own
++    short-lived SSH connection — deliberately independent of whatever
++    connection state recover_wedged_client's own tiers are juggling
++    internally (that function opens/closes/reopens several connections
++    across its 3 tiers; piggybacking the lock on any one of them would tie
++    its lifetime to a connection that may not outlive the whole recovery).
++    Single-shot, no retry: this narrows the race window, it does not need
++    to be a hard guarantee, and must never itself become a new failure mode
++    (in particular, must never raise and abort a recovery attempt).
++    """
++    cmd = "touch /tmp/nym_collection_active" if active else "rm -f /tmp/nym_collection_active"
++    try:
++        ssh = ssh_connect(client_cfg)
++        try:
++            ssh_run(ssh, cmd, check=False)
++        finally:
++            ssh.close()
++    except Exception as e:
++        print(f"  [wedge-recovery] lock {'set' if active else 'clear'} failed "
++              f"(best-effort, continuing): {e}")
++
++
++# PROPOSED (2026-07-12, NOT YET APPLIED — see
+ # patches/07_tor_client1_router_ssh_reconnect.md): ingress_ssh/egress_ssh are
+ # opened once at the top of run_dataset() and, unlike client_ssh, were never
+ # re-checked or reconnected afterward — see the client_ssh transport check at
+@@ -1204,6 +1245,27 @@
+ 
+ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
+     """
++    PROPOSED (2026-07-12, NOT YET APPLIED — see
++    patches/09_nym_watchdog_mode_aware.md): thin wrapper around
++    _recover_wedged_client_impl() (all actual recovery logic, unchanged —
++    see its docstring) that holds /tmp/nym_collection_active for the
++    duration of recovery on nym5/nym2, via _set_nym_collection_lock(), so
++    nym_watchdog.sh backs off instead of racing this function's own Tier 1a
++    nym-vpnc reconnect. try/finally guarantees the lock is cleared
++    regardless of which of the impl's several return points was hit, or
++    whether it raised.
++    """
++    if mode in ("nym5", "nym2"):
++        _set_nym_collection_lock(client_cfg, True)
++    try:
++        return _recover_wedged_client_impl(client_id, client_cfg, mode)
++    finally:
++        if mode in ("nym5", "nym2"):
++            _set_nym_collection_lock(client_cfg, False)
++
++
++def _recover_wedged_client_impl(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
++    """
+     Three-tier recovery escalation. Each tier is only reached if the previous
+     one failed — hcloud reset is the last resort, not the first.
+ 
+@@ -1224,6 +1286,10 @@
+ 
+     Returns (recovered, method, new_client_ssh). new_client_ssh is None if
+     recovery failed — callers must not assume the old client_ssh is usable.
++
++    Called only via recover_wedged_client() above, which holds the
++    nym-watchdog collection lock around this call — do not call this
++    function directly for nym5/nym2.
+     """
+     host = client_cfg["host"]
+ 
+@@ -1436,17 +1502,27 @@
+     bpf_out = BPF_EGRESS[mode]
+     tun1_ip = ""
+ 
++    # ── Step -1: Acquire collection lock (nym modes only), BEFORE rotation ──
++    # PROPOSED (2026-07-12, NOT YET APPLIED — see
++    # patches/09_nym_watchdog_mode_aware.md): moved earlier than before
++    # (previously acquired only after rotation, as "Step 0b"). Closes a gap
++    # where nym_watchdog.sh could race maybe_rotate_circuit()'s own nym-vpnc
++    # reconnect the same way it could race recover_wedged_client()'s — see
++    # that function's own patch note for the same race, discovered via
++    # nym5-client2 repeatedly coming back in the wrong tunnel mode. Uses the
++    # CURRENT client_ssh (about to be replaced by rotate_circuit_nym for nym
++    # modes) — the lock file persists on the VM's filesystem regardless of
++    # which SSH session touched it, so touching it here before the old
++    # connection closes is safe.
++    if mode in ("nym5", "nym2"):
++        ssh_run(client_ssh, "touch /tmp/nym_collection_active", check=False)
++
+     # ── Step 0: Rotate circuit (Tor NEWNYM / Nym reconnect) ───────────────
+     # For nym modes, rotate_circuit_nym closes client_ssh and returns a new one.
+     circuit_info, client_ssh = maybe_rotate_circuit(
+         client_ssh, client_cfg or {}, mode, rotate_circuits, client_id
+     )
+ 
+-    # ── Step 0b: Acquire collection lock (nym modes only) ─────────────────
+-    # Prevents the nym_watchdog.service from reconnecting mid-visit.
+-    if mode in ("nym5", "nym2"):
+-        ssh_run(client_ssh, "touch /tmp/nym_collection_active", check=False)
+-
+     # ── Step 0c: nym2 — log tun1 IP for debugging ─────────────────────────
+     # BPF captures outer WireGuard UDP from the static physical IPs — no
+     # dynamic tun1 IP needed for filtering. We still query and log it so
+--- scripts/nym_watchdog.sh
++++ /tmp/nym_watchdog.sh.proposed_task9
+@@ -5,9 +5,35 @@
+ # systemd service nym-watchdog.service.
+ #
+ # Every 30s:
+-#   1. If nym-vpnc reports anything other than "Connected": full recovery.
++#   1. If nym-vpnc reports anything other than "Connected", OR is connected
++#      in the WRONG tunnel mode for this VM: full recovery.
+ #   2. If connected in mix mode (nym5) but SOCKS5 is Disabled: re-enable it.
+ #      (Skipped for wg/nym2 — traffic routed at OS level, no proxy needed.)
++#
++# PROPOSED (2026-07-12, NOT YET APPLIED — see patches/09_nym_watchdog_mode_aware.md):
++# this script previously had ZERO mode awareness -- recover() always ran the
++# same disconnect/socks5/connect sequence regardless of which VM it was on,
++# and NEVER asserted `nym-vpnc tunnel set --two-hop off`, anywhere. Confirmed
++# live (2026-07-12): nym5-client2 repeatedly came back from recover() in
++# "wg" (WireGuard) mode instead of "mix" (mixnet) -- silently wrong, and
++# never self-corrected, because the main loop below only re-checks health
++# when nym-vpnc reports NOT connected; "Connected wg" on a nym5 VM was
++# treated as a healthy steady-state forever. Fixed by reading this VM's
++# INTENDED mode from /etc/nym-watchdog-mode (written by an updated
++# scripts/deploy_nym_watchdog.sh -- see that script's patch note) and: (a)
++# asserting --two-hop off before connecting on mix-mode VMs, (b) treating
++# "connected but in the wrong mode" the same as "not connected" so a VM
++# that somehow drifts back into the wrong mode self-corrects on the next
++# 30s cycle instead of being accepted indefinitely.
++#
++# SAFE-DEFAULT RULE: if /etc/nym-watchdog-mode is missing or unrecognized,
++# INTENDED_MODE stays empty and NONE of the new mode-specific behavior
++# applies -- this VM behaves EXACTLY as the pre-patch script did (the
++# socks5 block still runs unconditionally, matching old behavior; no
++# two-hop assertion, matching old behavior; no wrong-mode detection, since
++# we don't know what "wrong" means for this VM). This is deliberate: with 4
++# VMs sharing one script, a VM whose mode file didn't get deployed correctly
++# must fail safe into old behavior, never guess.
+ 
+ LOG=/var/log/nym_watchdog.log
+ INTERVAL=30
+@@ -16,23 +42,86 @@
+     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"
+ }
+ 
++# ── Intended mode (PROPOSED) ────────────────────────────────────────────────
++INTENDED_MODE_FILE=/etc/nym-watchdog-mode
++INTENDED_MODE=""
++if [[ -f "$INTENDED_MODE_FILE" ]]; then
++    INTENDED_MODE=$(tr -d '[:space:]' < "$INTENDED_MODE_FILE")
++fi
++if [[ "$INTENDED_MODE" != "mix" && "$INTENDED_MODE" != "wg" ]]; then
++    if [[ -n "$INTENDED_MODE" ]]; then
++        log "WARNING: $INTENDED_MODE_FILE contains unrecognized value '${INTENDED_MODE}' -- ignoring, falling back to mode-unaware (pre-patch) behavior"
++    else
++        log "WARNING: $INTENDED_MODE_FILE missing -- falling back to mode-unaware (pre-patch) behavior. Re-run scripts/deploy_nym_watchdog.sh to fix."
++    fi
++    INTENDED_MODE=""
++else
++    log "intended mode for this VM: $INTENDED_MODE"
++fi
++
+ recover() {
+-    log "RECOVER: starting full recovery sequence"
++    log "RECOVER: starting full recovery sequence (intended mode: ${INTENDED_MODE:-unknown})"
+     nym-vpnc disconnect || true
+     sleep 8
+-    nym-vpnc socks5 disable || true
+-    sleep 1
+-    for i in 1 2 3 4 5; do
+-        if nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 --exit-random; then
+-            log "RECOVER: socks5 enable succeeded (attempt $i)"
+-            break
++
++    # PROPOSED: socks5 block now skipped only for confirmed wg-mode VMs
++    # (nym2 -- doesn't use it at all, per the header comment). For mix
++    # (nym5) AND for unknown/unmigrated VMs it still runs unconditionally,
++    # exactly matching pre-patch behavior for the unknown case.
++    if [[ "$INTENDED_MODE" != "wg" ]]; then
++        nym-vpnc socks5 disable || true
++        sleep 1
++        for i in 1 2 3 4 5; do
++            if nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 --exit-random; then
++                log "RECOVER: socks5 enable succeeded (attempt $i)"
++                break
++            fi
++            log "RECOVER: socks5 enable attempt $i failed, retrying in 5s..."
++            sleep 5
++        done
++        sleep 2
++    fi
++
++    # PROPOSED: this is the actual bug fix. Only runs when INTENDED_MODE is
++    # confirmed "mix" -- never guessed for an unknown VM, never applied to a
++    # confirmed wg VM. Verified via `nym-vpnc tunnel get` (confirmed live,
++    # 2026-07-12: reports "Two-hop: off/on" directly, independent of
++    # connection state -- a more direct check than only inferring mode from
++    # `status` after connecting, and catches a failed assertion BEFORE
++    # wasting a connect attempt on it) rather than just trusting `tunnel
++    # set`'s own exit code, which may report success without the setting
++    # actually having taken. Retried up to 3x: a failed/silently-ignored
++    # assertion here, with no retry and no verification, is exactly how
++    # nym5-client2 kept coming back in the wrong mode.
++    if [[ "$INTENDED_MODE" == "mix" ]]; then
++        TWO_HOP_OK=false
++        for i in 1 2 3; do
++            nym-vpnc tunnel set --two-hop off || true
++            if nym-vpnc tunnel get 2>/dev/null | grep -qi "Two-hop: off"; then
++                log "RECOVER: two-hop off confirmed via 'tunnel get' (attempt $i)"
++                TWO_HOP_OK=true
++                break
++            fi
++            log "RECOVER: two-hop off not yet confirmed (attempt $i), retrying in 3s..."
++            sleep 3
++        done
++        if [[ "$TWO_HOP_OK" != true ]]; then
++            log "RECOVER: *** WARNING *** could not confirm two-hop off after 3 attempts -- proceeding to connect anyway, post-connect status check below will flag if this VM comes back in the wrong mode"
+         fi
+-        log "RECOVER: socks5 enable attempt $i failed, retrying in 5s..."
+-        sleep 5
+-    done
+-    sleep 2
++    fi
++
+     if nym-vpnc connect --wait && /usr/local/bin/nym-post-connect.sh; then
+         log "RECOVER: reconnect succeeded"
++        # PROPOSED: verify the mode actually took, don't just trust the
++        # assertion above succeeded silently.
++        if [[ "$INTENDED_MODE" == "mix" ]]; then
++            POST_STATUS=$(nym-vpnc status 2>/dev/null || echo "error")
++            if echo "$POST_STATUS" | grep -qi "mix"; then
++                log "RECOVER: confirmed mix mode after reconnect"
++            else
++                log "RECOVER: *** WARNING *** intended mode is mix but post-connect status does NOT show mix mode (status=${POST_STATUS//[$'\n']/ }) -- two-hop assertion did not take effect"
++            fi
++        fi
+     else
+         log "RECOVER: WARNING reconnect failed — will retry next cycle"
+     fi
+@@ -70,7 +159,25 @@
+             TUNNEL_MODE="wg"
+         fi
+ 
+-        if [[ "$TUNNEL_MODE" == "mix" ]]; then
++        # PROPOSED: "Connected" alone used to be treated as fully healthy
++        # regardless of TUNNEL_MODE -- a nym5 VM connected in "wg" mode was
++        # accepted forever, since nothing here ever re-checked it once
++        # nym-vpnc stopped reporting "not Connected". Now: connected in the
++        # wrong mode for this VM's INTENDED_MODE is treated the same as not
++        # connected at all, so it self-corrects on the next cycle instead of
++        # staying silently wrong indefinitely. No-op when INTENDED_MODE is
++        # unknown (unmigrated VM) -- same safe-default rule as recover().
++        WRONG_MODE=false
++        if [[ "$INTENDED_MODE" == "mix" && "$TUNNEL_MODE" != "mix" ]]; then
++            WRONG_MODE=true
++        elif [[ "$INTENDED_MODE" == "wg" && "$TUNNEL_MODE" == "mix" ]]; then
++            WRONG_MODE=true
++        fi
++
++        if [[ "$WRONG_MODE" == true ]]; then
++            log "STATUS: connected but in WRONG mode (intended=$INTENDED_MODE, actual=$TUNNEL_MODE) — triggering recovery"
++            recover
++        elif [[ "$TUNNEL_MODE" == "mix" ]]; then
+             SOCKS5_STATUS=$(nym-vpnc socks5 status 2>/dev/null || echo "unknown")
+             if echo "$SOCKS5_STATUS" | grep -qi "Disabled"; then
+                 log "SOCKS5: mix mode but SOCKS5 is Disabled — re-enabling"
+--- scripts/deploy_nym_watchdog.sh
++++ /tmp/deploy_nym_watchdog.sh.proposed_task9
+@@ -3,6 +3,35 @@
+ # ==============================
+ # Copies nym_watchdog.sh to all 4 Nym VMs and installs it as a systemd service.
+ #
++# PROPOSED (2026-07-12, NOT YET APPLIED -- see
++# patches/09_nym_watchdog_mode_aware.md): two changes on top of the
++# previous version:
++#   1. All 4 VMs' IPs cross-checked against config/infrastructure.py (the
++#      source of truth the live coordinator actually uses) and against
++#      Hetzner directly (confirmed by the user 2026-07-12). Three of the
++#      four were stale here:
++#        nym5-client2: 204.168.201.84  -> 178.104.191.219
++#        nym2-client1: 204.168.181.115 -> 95.216.218.124
++#        nym2-client2: 95.216.218.124  -> 178.104.184.192
++#      (nym2-client1's OLD IP here, 204.168.181.115, was never even a valid
++#      entry in config/infrastructure.py's CLIENTS dict -- SSH to it during
++#      this investigation returned a host-key-changed warning, meaning
++#      whatever answers on that IP now is not confirmed to be this VM at
++#      all. Left untouched, not investigated further -- out of scope.)
++#      Private IPs (10.0.0.4 for client1, 10.0.0.6 for client2) were
++#      unchanged throughout, confirming these are the same underlying VMs,
++#      just with different public IPs than this script previously had.
++#      Re-running the OLD version of this script would have deployed the
++#      watchdog fix to the wrong machine (or a machine of unconfirmed
++#      identity) for 3 of the 4 VMs.
++#   2. Each VM now also gets /etc/nym-watchdog-mode written with its
++#      intended mode ("mix" for nym5, "wg" for nym2) BEFORE the service is
++#      (re)started, so nym_watchdog.sh's new mode-aware logic (see that
++#      script's own patch note) knows what to enforce. The mode is declared
++#      once, right next to each VM's IP, so it can't drift out of sync with
++#      the IP list the way the two lists in nym_watchdog.sh vs. this script
++#      could have.
++#
+ # Usage (from repo root):
+ #   bash scripts/deploy_nym_watchdog.sh
+ 
+@@ -14,11 +43,14 @@
+ SSH_KEY="~/.ssh/nico-thesis"
+ SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+ 
++# PROPOSED: "IP:MODE" pairs, one array entry per VM, so the mode can never
++# be listed against the wrong IP by accident (previously mode wasn't
++# tracked here at all).
+ NYM_VMS=(
+-    "204.168.204.120"   # nym5-client1
+-    "204.168.201.84"    # nym5-client2
+-    "204.168.181.115"   # nym2-client1
+-    "95.216.218.124"    # nym2-client2
++    "204.168.204.120:mix"   # nym5-client1
++    "178.104.191.219:mix"   # nym5-client2 (IP corrected -- see header note)
++    "95.216.218.124:wg"     # nym2-client1 (IP corrected -- see header note)
++    "178.104.184.192:wg"    # nym2-client2 (IP corrected -- see header note)
+ )
+ 
+ SERVICE_UNIT="[Unit]
+@@ -40,9 +72,14 @@
+     exit 1
+ fi
+ 
+-for HOST in "${NYM_VMS[@]}"; do
++for ENTRY in "${NYM_VMS[@]}"; do
++    HOST="${ENTRY%%:*}"
++    MODE="${ENTRY##*:}"
+     echo ""
+-    echo "── $HOST ──────────────────────────────────────────"
++    echo "── $HOST (mode=$MODE) ──────────────────────────────────────────"
++
++    echo "  writing /etc/nym-watchdog-mode = $MODE"
++    ssh $SSH_OPTS "root@${HOST}" "echo '${MODE}' > /etc/nym-watchdog-mode"
+ 
+     echo "  copying $SCRIPT_SRC → $HOST:$REMOTE_BIN"
+     scp $SSH_OPTS "$SCRIPT_SRC" "root@${HOST}:${REMOTE_BIN}"

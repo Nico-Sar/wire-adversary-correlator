@@ -15,6 +15,8 @@ Usage:
 """
 
 import argparse
+import fcntl
+import itertools
 import json
 import os
 import re
@@ -53,9 +55,27 @@ from config.infrastructure import (
     SNAPSHOT_LENGTH, TOR_CONTROL_PASSWORD, URL_BASE, WEB_SERVER,
     build_ingress_bpf,
 )
+from config.hyperparams import VISIT_TIMEOUTS
 
 
 # ── SSH helpers ───────────────────────────────────────────────────────────────
+#
+# A FULL VM HANG (kernel stops servicing the socket, no RST/FIN ever arrives)
+# is invisible to paramiko unless every blocking call carries an explicit
+# bound. exec_command(timeout=None) — the default, and what every call below
+# used before this was diagnosed — opens its channel via
+# Transport.open_session(timeout=None), which falls back to
+# Transport.channel_timeout (default 3600s), and then does chan.settimeout
+# (None) for the read/write phase, which DISABLES the timeout entirely. A
+# hung VM therefore blocks a coordinator with no exception ever raised, which
+# is why wedge recovery (keyed on catching an exception) never fired during
+# the live nym2/nym5 hangs. CHANNEL_OPEN_TIMEOUT_S is set once at connect
+# time so it also backstops open_sftp() (used by scp_get), which has no
+# timeout parameter of its own to override the 3600s default.
+CHANNEL_OPEN_TIMEOUT_S      = 20    # bounds opening any new channel on this connection
+DEFAULT_SSH_EXEC_TIMEOUT_S  = 30    # bounds short administrative commands via ssh_run()
+SCP_TIMEOUT_S               = 60    # bounds the pcap-pull data-transfer phase
+
 
 def ssh_connect(host_cfg: dict) -> paramiko.SSHClient:
     """Opens and returns an authenticated SSHClient for a host config dict."""
@@ -67,6 +87,9 @@ def ssh_connect(host_cfg: dict) -> paramiko.SSHClient:
         username=host_cfg["user"],
         key_filename=str(Path(key_path).expanduser()),
         timeout=15,
+        banner_timeout=20,
+        auth_timeout=20,
+        channel_timeout=CHANNEL_OPEN_TIMEOUT_S,
     )
     return client
 
@@ -87,15 +110,137 @@ def retry_ssh_connect(host_cfg: dict, max_retries: int = 5, delay: int = 15) -> 
     ) from last_exc
 
 
-def ssh_run(client: paramiko.SSHClient, cmd: str, check=True) -> str:
+# PROPOSED (2026-07-12, NOT YET APPLIED — see
+# patches/09_nym_watchdog_mode_aware.md): nym_watchdog.sh (deployed
+# separately on each nym VM, see scripts/nym_watchdog.sh) is supposed to
+# back off from reconnecting a client's tunnel while /tmp/nym_collection_active
+# is present — that lock exists specifically so the watchdog never fights a
+# visit in progress. coordinator.py's run_single_visit() already
+# touches/removes this lock around the actual capture window, but
+# recover_wedged_client() — the function patch 06's broadened retry
+# classification requeues through — never touched it at all. Confirmed
+# live (2026-07-12): the lock is released at the END of run_single_visit,
+# BEFORE the SOCKS5-wedge exception that triggers recover_wedged_client is
+# even raised, so the entire wedge-recovery window (which itself does its
+# own nym-vpnc reconnect in Tier 1a) ran completely unprotected — free for
+# nym_watchdog.sh to independently detect "not connected" mid-recovery and
+# fire its own competing reconnect at the same time. Two independent
+# processes reconnecting the same tunnel concurrently is exactly the kind
+# of race that can leave it in an inconsistent state.
+def _set_nym_collection_lock(client_cfg: dict, active: bool) -> None:
+    """
+    Best-effort touch/remove of /tmp/nym_collection_active via its own
+    short-lived SSH connection — deliberately independent of whatever
+    connection state recover_wedged_client's own tiers are juggling
+    internally (that function opens/closes/reopens several connections
+    across its 3 tiers; piggybacking the lock on any one of them would tie
+    its lifetime to a connection that may not outlive the whole recovery).
+    Single-shot, no retry: this narrows the race window, it does not need
+    to be a hard guarantee, and must never itself become a new failure mode
+    (in particular, must never raise and abort a recovery attempt).
+    """
+    cmd = "touch /tmp/nym_collection_active" if active else "rm -f /tmp/nym_collection_active"
+    try:
+        ssh = ssh_connect(client_cfg)
+        try:
+            ssh_run(ssh, cmd, check=False)
+        finally:
+            ssh.close()
+    except Exception as e:
+        print(f"  [wedge-recovery] lock {'set' if active else 'clear'} failed "
+              f"(best-effort, continuing): {e}")
+
+
+# PROPOSED (2026-07-12, NOT YET APPLIED — see
+# patches/07_tor_client1_router_ssh_reconnect.md): ingress_ssh/egress_ssh are
+# opened once at the top of run_dataset() and, unlike client_ssh, were never
+# re-checked or reconnected afterward — see the client_ssh transport check at
+# the top of run_dataset's wedge-aware loop for the pattern this mirrors. A
+# dropped router SSH session (confirmed live on tor-client1's backfill runs:
+# ingress/egress captures started failing and never recovered for the rest
+# of the run) permanently fails every subsequent start_remote_capture() call
+# on that router — see start_ingress()/start_egress()'s ingress_err_box/
+# egress_err_box handling in run_single_visit, which downgrades every visit
+# to "skipped_tshark_failed" with no path back to a working session.
+#
+# Deliberately NOT routed through recover_wedged_client()/
+# WEDGE_MAX_RECOVERY_ATTEMPTS like client_ssh's own reconnect is: that tier
+# system's Tier 1a/1b/2 escalation (nym-vpnc reconnect, service restart,
+# hcloud reset) is about recovering one CLIENT VM, and doesn't apply to a
+# router. A dead router also isn't like a dead client — every client sharing
+# that router is blocked, not just one — so unlike a wedged client (where
+# giving up on one visit and moving to the next at least makes forward
+# progress elsewhere), giving up here wouldn't route around the problem;
+# every subsequent visit would fail identically until the router comes back.
+# ensure_router_ssh() therefore blocks (with a bounded backoff and one loud
+# alert) rather than exhausting a fixed attempt count and marking visits
+# lost — see its two call sites in run_dataset's primary and backfill loops.
+_ROUTER_SSH_RECONNECT_MAX_ATTEMPTS = 3    # each internally retries 5x/15s via retry_ssh_connect
+_ROUTER_SSH_RECONNECT_BACKOFF_S    = 30   # between rounds of _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS
+_ROUTER_SSH_DOWN_POLL_S            = 60   # sleep between blocking retries once alerted
+
+
+def ensure_router_ssh(ssh_client: paramiko.SSHClient, router_cfg: dict,
+                       label: str) -> paramiko.SSHClient:
+    """
+    Mirrors the transport-liveness check client_ssh already gets in
+    run_dataset's wedge-aware loop, applied to a router's SSH handle.
+    Returns a live SSHClient — the same one if its transport is still active,
+    a fresh one (via retry_ssh_connect, which has its own internal 5x/15s
+    retry) otherwise. Raises after _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS bounded
+    rounds if the router is still unreachable — callers must not swallow
+    this silently (see the "why not recover_wedged_client" note above): a
+    dead router forecloses collection for every client sharing it.
+    """
+    if ssh_client.get_transport() and ssh_client.get_transport().is_active():
+        return ssh_client
+    last_err: Exception | None = None
+    for attempt in range(1, _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS + 1):
+        print(f"  [router-ssh] {label} router SSH session dropped — reconnect "
+              f"attempt {attempt}/{_ROUTER_SSH_RECONNECT_MAX_ATTEMPTS}")
+        try:
+            new_ssh = retry_ssh_connect(router_cfg)
+            print(f"  [router-ssh] {label} router SSH reconnected")
+            return new_ssh
+        except Exception as e:
+            last_err = e
+            if attempt < _ROUTER_SSH_RECONNECT_MAX_ATTEMPTS:
+                time.sleep(_ROUTER_SSH_RECONNECT_BACKOFF_S)
+    raise RuntimeError(
+        f"{label} router SSH unreachable after {_ROUTER_SSH_RECONNECT_MAX_ATTEMPTS} "
+        f"reconnect rounds: {last_err}"
+    )
+
+
+def ssh_run(client: paramiko.SSHClient, cmd: str, check=True,
+            timeout: float = DEFAULT_SSH_EXEC_TIMEOUT_S) -> str:
     """
     Runs a command on the remote host and returns stdout as a string.
     If check=True, raises RuntimeError on non-zero exit code.
+
+    timeout bounds the channel-open AND the read phase (paramiko forwards it
+    to chan.settimeout(), which Channel.recv()/.read() honor) — a hung VM
+    raises socket.timeout/SSHException within `timeout` seconds instead of
+    blocking indefinitely. Callers whose remote command can legitimately run
+    longer than the default (e.g. trigger_visit's browser/curl visit) must
+    pass an explicit larger value.
+
+    recv_exit_status() is called AFTER draining stdout/stderr, not before —
+    it has no timeout parameter at all in this paramiko version (raw
+    Event.wait(), unbounded) and is also paramiko's own documented advice
+    (avoids a window-size deadlock). Calling it first — as this used to —
+    means a hung VM blocks forever right there, completely ignoring the
+    `timeout` passed to exec_command: confirmed live, on the wire, against a
+    real powered-off VM, while validating this fix.
     """
-    _, stdout, stderr = client.exec_command(cmd)
-    exit_code = stdout.channel.recv_exit_status()
+    _, stdout, stderr = client.exec_command(cmd, timeout=timeout)
     out = stdout.read().decode().strip()
     err = stderr.read().decode().strip()
+    if not stdout.channel.status_event.wait(timeout):
+        raise TimeoutError(
+            f"command timed out waiting {timeout}s for exit status: {cmd}"
+        )
+    exit_code = stdout.channel.exit_status
     if check and exit_code != 0:
         raise RuntimeError(
             f"Remote command failed (exit {exit_code}):\n"
@@ -109,6 +254,11 @@ def scp_get(client: paramiko.SSHClient, remote_path: str, local_path: Path):
     """Downloads a file from the remote host to local_path via SFTP."""
     local_path.parent.mkdir(parents=True, exist_ok=True)
     with client.open_sftp() as sftp:
+        # open_sftp() has no timeout parameter of its own — its internal
+        # channel-open falls back to the connection's channel_timeout
+        # (set at connect time). This bounds the actual data-transfer phase,
+        # which channel_timeout does not cover.
+        sftp.get_channel().settimeout(SCP_TIMEOUT_S)
         sftp.get(remote_path, str(local_path))
 
 
@@ -179,6 +329,21 @@ def verify_clock_sync(ingress_ssh, egress_ssh, max_drift_ms=MAX_CLOCK_DRIFT_MS):
 
 def start_remote_capture(ssh_client, iface: str, bpf: str,
                           pcap_remote_path: str) -> str:
+    # Defensive backstop: kill any tshark orphaned by a prior visit whose
+    # cleanup never ran (crash, uncaught exception, or the specific gap this
+    # was written to close — see the try/finally and the failure-path
+    # cleanup in run_single_visit). 120s is far above any real visit's
+    # capture window, so this can never touch a legitimately still-running
+    # capture from a concurrent client sharing this router. Confirmed live
+    # (2026-07-04): 52 orphaned egress tshark processes accumulated this way
+    # and choked out essentially every new capture start on that router —
+    # skipped_tshark_failed hit 93% of nym2 visits before this was found.
+    ssh_run(
+        ssh_client,
+        "for p in $(ps -eo pid,etimes,comm | awk '$3==\"tshark\" && $2>120 {print $1}'); "
+        "do kill -9 \"$p\" 2>/dev/null; done",
+        check=False,
+    )
     log_file = pcap_remote_path.replace('.pcap', '.log')
     cmd = (
         f"/usr/bin/tshark -i {iface} -f '{bpf}' "
@@ -232,6 +397,16 @@ _TOR_CONTROL_PORT      = 9051
 _NYM_POLL_INTERVAL_S   = 3
 _NYM_ROTATE_SLEEP_S      = 30   # time to wait after closing SSH before reconnecting
 _NYM_SOCKS5_POLL_TIMEOUT_S = 90  # max wait for SOCKS5 port 1080 to come up after reconnect
+# PROPOSED (2026-07-12, NOT YET APPLIED — see
+# patches/06_nym5_client2_retry_classification.md): post-rotation gateway
+# reachability probe constants. SOCKS5 port 1080 listening (5b above) proves
+# nym-vpnc's local proxy is up, not that the freshly-assigned exit gateway is
+# actually routing traffic yet — a curl through the proxy to the known-good
+# web server is a ~seconds-cheap way to catch a doomed gateway before
+# spending a full visit timeout (180s for nym5) discovering it via Playwright.
+_NYM5_POST_ROTATE_PROBE_RETRIES     = 2   # 1 initial probe + 1 probe after one re-rotation
+_NYM5_POST_ROTATE_PROBE_TIMEOUT_S   = 8   # curl -m per attempt
+_NYM5_POST_ROTATE_PROBE_RETRY_SLEEP_S = 5  # settle time after re-issuing --exit-random
 
 # Scripts written to /tmp/nym_rotate.sh on the client VM.
 #
@@ -423,10 +598,27 @@ def rotate_circuit_nym(
     new_ssh = retry_ssh_connect(client_cfg)
 
     # 5b — poll until SOCKS5 port 1080 is listening (nym5 only; nym2 uses WireGuard)
+    #
+    # The channel can die AGAIN here, after already surviving one reconnect
+    # above: the nohup'd rotate script keeps mutating routing/nft state for a
+    # while after the first successful reconnect (post-connect.sh's own
+    # multi-second sequence, SSH-safety reassertion, etc), and ssh_run raises
+    # even with check=False on a dead channel. Confirmed live (2026-07-04):
+    # this exact spot crashed the whole coordinator process mid-rotation.
+    # Treat a mid-poll disconnect as "reconnect and keep polling", not fatal.
     if socks5:
         poll_start = time.time()
         while True:
-            out = ssh_run(new_ssh, "ss -tnlp | grep 1080 || true", check=False)
+            try:
+                out = ssh_run(new_ssh, "ss -tnlp | grep 1080 || true", check=False)
+            except Exception as e:
+                print(f"  [rotate-nym]  ssh dropped mid-poll ({e}) — reconnecting")
+                try:
+                    new_ssh.close()
+                except Exception:
+                    pass
+                new_ssh = retry_ssh_connect(client_cfg)
+                out = ""
             if "1080" in out:
                 print(f"  [rotate-nym]  SOCKS5 port 1080 ready ({time.time() - poll_start:.0f}s)")
                 break
@@ -436,8 +628,80 @@ def rotate_circuit_nym(
             print(f"  [rotate-nym]  waiting for SOCKS5… ({time.time() - poll_start:.0f}s)")
             time.sleep(_NYM_POLL_INTERVAL_S)
 
-    # 6 — read status from the live tunnel
-    status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || cat /tmp/nym_rotate.log 2>/dev/null || echo unknown", check=False)
+        # 5c — PROPOSED: post-rotation gateway reachability probe. Curl the
+        # known-good web server through the proxy that just came up in 5b.
+        # A 200 confirms the freshly-rotated exit gateway is actually routing
+        # traffic; anything else re-issues --exit-random once and probes
+        # again before giving up and continuing regardless — the visit-level
+        # retry classification (is_socks5_wedge_error, broadened in this same
+        # patch) is the backstop if this still doesn't catch it.
+        gateway_ok = False
+        probe_url = URL_BASE["nym5"] + "/page_html_1.html"
+        for probe_attempt in range(1, _NYM5_POST_ROTATE_PROBE_RETRIES + 1):
+            try:
+                http_code = ssh_run(
+                    new_ssh,
+                    f"curl -s -o /dev/null -m {_NYM5_POST_ROTATE_PROBE_TIMEOUT_S} "
+                    f"--socks5 127.0.0.1:1080 -w '%{{http_code}}' {probe_url} "
+                    f"2>/dev/null || echo 000",
+                    check=False,
+                ).strip()
+            except Exception as e:
+                print(f"  [rotate-nym]  ssh dropped during gateway probe ({e}) — reconnecting")
+                try:
+                    new_ssh.close()
+                except Exception:
+                    pass
+                new_ssh = retry_ssh_connect(client_cfg)
+                http_code = "000"
+            if http_code == "200":
+                print(f"  [rotate-nym]  post-rotation gateway probe OK "
+                      f"(attempt {probe_attempt}/{_NYM5_POST_ROTATE_PROBE_RETRIES})")
+                gateway_ok = True
+                break
+            print(f"  [rotate-nym]  post-rotation gateway probe FAILED "
+                  f"(HTTP {http_code!r}, attempt {probe_attempt}/"
+                  f"{_NYM5_POST_ROTATE_PROBE_RETRIES})"
+                  + ("" if probe_attempt >= _NYM5_POST_ROTATE_PROBE_RETRIES
+                     else " — rotating again rather than spending a full visit "
+                          "timeout on a likely-doomed gateway"))
+            if probe_attempt < _NYM5_POST_ROTATE_PROBE_RETRIES:
+                # Re-run just the disable/enable/--exit-random cycle, not the
+                # full disconnect/nftables/preamble sequence from step 1 —
+                # the tunnel and nftables state are already fine here; only
+                # the gateway assignment needs to change.
+                try:
+                    ssh_run(new_ssh, "nym-vpnc socks5 disable || true", check=False)
+                    time.sleep(1)
+                    ssh_run(
+                        new_ssh,
+                        "nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 "
+                        "--exit-random 2>/dev/null || true",
+                        check=False,
+                    )
+                except Exception as e:
+                    print(f"  [rotate-nym]  ssh dropped re-issuing --exit-random ({e}) — reconnecting")
+                    try:
+                        new_ssh.close()
+                    except Exception:
+                        pass
+                    new_ssh = retry_ssh_connect(client_cfg)
+                time.sleep(_NYM5_POST_ROTATE_PROBE_RETRY_SLEEP_S)
+        if not gateway_ok:
+            print(f"  [rotate-nym]  WARNING: gateway probe still failing after "
+                  f"{_NYM5_POST_ROTATE_PROBE_RETRIES} attempt(s) — continuing anyway "
+                  f"(visit-level retry classification is the backstop)")
+
+    # 6 — read status from the live tunnel (same dead-channel risk as 5b)
+    try:
+        status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || cat /tmp/nym_rotate.log 2>/dev/null || echo unknown", check=False)
+    except Exception:
+        try:
+            new_ssh.close()
+        except Exception:
+            pass
+        new_ssh = retry_ssh_connect(client_cfg)
+        status = ssh_run(new_ssh, "nym-vpnc status 2>/dev/null || echo unknown", check=False)
 
     # nym-vpnc status format (v1.27):
     #   "State: Connected mix to <ip> [<entry-id>] → <ip> [<exit-id>]"
@@ -450,7 +714,15 @@ def rotate_circuit_nym(
 
     circuit_info = f"entry={entry} exit={exit_}"
 
-    routes = ssh_run(new_ssh, "ip route show table 100 2>/dev/null | head -3", check=False)
+    try:
+        routes = ssh_run(new_ssh, "ip route show table 100 2>/dev/null | head -3", check=False)
+    except Exception:
+        try:
+            new_ssh.close()
+        except Exception:
+            pass
+        new_ssh = retry_ssh_connect(client_cfg)
+        routes = "(reconnected after routes check dropped)"
     print(f"  [rotate-nym]  {circuit_info}  routes={routes!r:.80}")
     return circuit_info, new_ssh
 
@@ -501,7 +773,12 @@ def trigger_visit(client_ssh, url: str, proxy: str | None,
         f"--mode {mode} "
         f"{proxy_arg}"
     )
-    out = ssh_run(client_ssh, cmd, check=False)
+    # visit_trigger.py bounds itself internally (playwright page.goto timeout
+    # / curl --max-time) to VISIT_TIMEOUTS[mode]["curl_s"] at most — the SSH
+    # layer must allow at least that long plus process/launch overhead, or a
+    # legitimately slow (but successful) visit gets misclassified as a hang.
+    visit_ssh_timeout = VISIT_TIMEOUTS.get(mode, VISIT_TIMEOUTS["vpn"])["curl_s"] + 60
+    out = ssh_run(client_ssh, cmd, check=False, timeout=visit_ssh_timeout)
     try:
         return json.loads(out)
     except json.JSONDecodeError:
@@ -643,6 +920,34 @@ _SOFT_WEDGE_SSH_RETRY_DELAY = 10
 # not finished booting — poll instead of single-shot-checking.
 _WEDGE_HEALTH_POLL_TIMEOUT_S  = 90
 _WEDGE_HEALTH_POLL_INTERVAL_S = 5
+# Nym-specific connection-level reconnect attempts (Tier 1a in recover_wedged_client).
+# The common trigger for nym mass-hangs is a transient gateway lookup failure
+# ("Failed to lookup gateways with SOCKS5 data: failed to get gateways") which
+# leaves nym-vpnd running but SOCKS5 in State:Disabled / no tun. nym-vpnc
+# reconnect fixes this without a VM reset. Retry a couple of times with a short
+# gap — the gateway service may still be recovering — before falling through to
+# service restart (Tier 1b) or hard reset (Tier 2).
+_NYM_RECONNECT_RETRIES       = 2
+_NYM_RECONNECT_RETRY_DELAY_S = 15
+# Tier 1a used to run `nym-vpnc reconnect` directly over the existing SSH
+# channel. Confirmed live (2026-07-04, canary nym5-client2) that reconnect
+# itself transiently breaks SSH — it rebuilds routing/nft state and the
+# in-flight channel dies mid-command, so the follow-up `socks5 enable` and
+# the health poll then run against a dead channel and never recover, hanging
+# tier 1a instead of escalating. Fix mirrors rotate_circuit_nym's already-
+# working pattern: write the reconnect+reassert steps to a script, launch it
+# nohup'd so it survives the channel dying, close this channel proactively,
+# then open a fresh SSH connection rather than trust the old one.
+_NYM_TIER1A_RECONNECT_WAIT_S = 40   # reconnect (~30s) + post-connect.sh (~5s) + margin
+# hcloud per-server lock + retry-on-locked constants.
+# "resource is locked" is a transient Hetzner API state (action already in
+# flight on that server). Retry with exponential backoff instead of failing;
+# use a per-server flock file to prevent two callers from ever firing
+# overlapping ops on the same VM (distinct VMs are independent and parallel).
+_HCLOUD_RESET_MAX_LOCKED_RETRIES  = 8
+_HCLOUD_RESET_LOCKED_BACKOFF_BASE = 15    # seconds; doubles per retry, capped at:
+_HCLOUD_RESET_LOCKED_BACKOFF_MAX  = 120   # seconds
+_HCLOUD_RESET_CMD_TIMEOUT         = 120   # per-attempt subprocess timeout (s)
 
 
 def _poll_until_healthy(ssh: paramiko.SSHClient, mode: str,
@@ -730,14 +1035,67 @@ def fire_alert(output_dir: Path, message: str) -> None:
 #     packets already captured (the zero-ingress guard never fires for
 #     these), meaning the *previous* rotation succeeded and the listener
 #     died after that — not a dead target.
-#   - "NS_ERROR_CONNECTION_REFUSED" (without PROXY_): only 3/646, and each one
-#     shows substantial ingress (981-1837 packets) AND non-trivial egress
-#     bytes — the proxy was up and routing; this specific request was refused
-#     at the destination/relay layer. Deliberately NOT classified as
-#     wedge-class: requeuing these indefinitely would be retrying a failure
-#     that has nothing to do with SOCKS5 health, exactly the "genuine
-#     dead-site error" case that must not be requeued forever.
-_SOCKS5_WEDGE_ERROR_MARKERS = ("NS_ERROR_PROXY_CONNECTION_REFUSED",)
+#   - "NS_ERROR_CONNECTION_REFUSED" (without PROXY_): only 3/646 in the
+#     aggregate 20h validation run, and each one showed substantial ingress
+#     (981-1837 packets) AND non-trivial egress bytes — the proxy was up and
+#     routing; that specific request was refused at the destination/relay
+#     layer. Originally deliberately NOT classified as wedge-class on that
+#     basis: requeuing these indefinitely would be retrying a failure that
+#     has nothing to do with SOCKS5 health, the "genuine dead-site error"
+#     case that must not be requeued forever.
+#
+# PROPOSED (2026-07-12, NOT YET APPLIED — see
+# patches/06_nym5_client2_retry_classification.md): a live-campaign audit of
+# nym5-client2 specifically (not the aggregate population above) found a very
+# different picture for that one client: plain Page.goto timeouts accounted
+# for ~45% of its failed visits and NS_ERROR_CONNECTION_REFUSED for ~9% —
+# both currently fall through this classifier untouched and permanently burn
+# the visit slot (see the `if healthy: ... except Exception` branch below,
+# and the wedge-aware loop in run_dataset that only requeues on a raised
+# SOCKS5WedgeError). Critically, 65.8% of client2's failures land on the
+# FIRST visit after a circuit rotation (vs. ~34% baseline for later visits
+# in the same circuit) — the signature of "freshly-rotated gateway hasn't
+# finished warming up yet", not "target site is actually down". That's
+# exactly the class of transient condition this retry mechanism exists to
+# paper over, so both markers below are added to the retry-eligible set.
+#
+# Two things to know before applying:
+#  1. is_socks5_wedge_error() is evaluated unconditionally for every mode's
+#     visit_status (see the call site further down), not gated to nym5 — so
+#     broadening these markers broadens retry-eligibility for tor/vpn/nym2
+#     too, not just nym5-client2. NS_ERROR_CONNECTION_REFUSED is Firefox/
+#     Playwright-specific (curl-driven binary visits never produce it), so
+#     that part is low-risk. The timeout marker is the one that generalizes
+#     furthest: for a genuinely dead/slow target site under tor or vpn
+#     (rather than a wedged gateway), this now costs up to
+#     WEDGE_MAX_RECOVERY_ATTEMPTS extra recovery cycles (each involving a
+#     nym-vpnc-style reconnect attempt via recover_wedged_client, ~40-90s)
+#     before falling through to the same terminal outcome it hit immediately
+#     before this patch. The current diagnosis is nym5-client2-specific and
+#     doesn't establish whether tor/vpn have the same rotation-adjacent
+#     pattern — if this proves costly for them in practice, scope the new
+#     markers to `mode in ("nym5", "nym2")` at the call site instead of
+#     broadening globally. Not done here since the live evidence only
+#     supports nym5 today.
+#  2. No new retry-cap constant is introduced. WEDGE_MAX_RECOVERY_ATTEMPTS
+#     (defined above, currently 2) already bounds every wedge-class cause —
+#     SOCKS5-refused, these two new markers, VM hangs, everything — to the
+#     same max-3-total-attempts-per-visit-slot ceiling, via the single
+#     `visit_attempt` counter in run_dataset's wedge-aware loop. A genuinely
+#     dead gateway still cannot loop forever under this patch; it just now
+#     gets the same bounded number of chances SOCKS5-refused already gets,
+#     rather than zero.
+_SOCKS5_WEDGE_ERROR_MARKERS = (
+    "NS_ERROR_PROXY_CONNECTION_REFUSED",
+    "NS_ERROR_CONNECTION_REFUSED",   # PROPOSED — see note above
+    "ms exceeded",                   # PROPOSED — Playwright's page.goto timeout
+                                      # message always ends "<N>ms exceeded."
+                                      # (e.g. "Page.goto: Timeout 180000ms
+                                      # exceeded."); confirmed live in
+                                      # round_03/nym5_visits.jsonl this exact
+                                      # string is what a plain nym5-client2
+                                      # timeout looks like today.
+)
 
 
 def is_socks5_wedge_error(visit_status: str) -> bool:
@@ -751,6 +1109,29 @@ class SOCKS5WedgeError(RuntimeError):
     error."""
 
 
+# ── VM-hang classification ──────────────────────────────────────────────────
+#
+# A full VM hang (kernel stops servicing the socket) now surfaces as a bounded
+# timeout exception instead of blocking forever (see ssh_run/ssh_connect
+# above). This is rarer and more severe than a routine soft wedge (which
+# fire_alert deliberately stays silent on when recovery succeeds — see the
+# "Threshold alerting" section), so for an unattended multi-day run it is
+# always logged to ALERTS.log, detection AND outcome, regardless of whether
+# recovery succeeds — that's the trail this run needs that didn't exist
+# before.
+_VM_HANG_REASON_MARKERS = (
+    "timed out",                 # socket.timeout str()
+    "Timeout opening channel",   # paramiko SSHException on a hung channel-open
+    "Connection timed out",
+    "No route to host",
+    "Connection refused",        # transient during a reboot, but reconnect-side
+)
+
+
+def is_vm_hang_reason(reason: str) -> bool:
+    return any(marker in reason for marker in _VM_HANG_REASON_MARKERS)
+
+
 def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool, str]:
     """
     Returns (healthy, reason). reason is "" when healthy, else a short
@@ -761,6 +1142,16 @@ def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool
          short timeout — a hard (full network-stack) wedge fails here.
       2. Mode-specific tunnel signal — a soft (nym-vpnd/tunnel-only) wedge
          fails here while SSH itself is fine.
+
+    The whole body is one try/except, not just step 1: the mode-specific
+    ssh_run() calls below can also raise (TimeoutError/SSHException) even
+    with check=False — that only suppresses non-zero exit codes, not a
+    channel that dies between here and the previous check. Originally only
+    step 1 was guarded, so a channel dying during step 2 raised uncaught out
+    of this function into whichever tier's polling loop called it, crashing
+    the entire coordinator process for that client with no fallback —
+    confirmed live (2026-07-04, nym5-client2's coordinator process vanished
+    exactly this way, traceback rooted in this function via _poll_until_healthy).
     """
     try:
         if not (client_ssh.get_transport() and client_ssh.get_transport().is_active()):
@@ -770,40 +1161,139 @@ def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool
         stdout.channel.recv_exit_status()
         if out != "ALIVE":
             return False, f"ssh command did not echo ALIVE (got {out!r})"
+
+        if mode == "nym5":
+            socks5 = ssh_run(client_ssh, "ss -tnlp 2>/dev/null | grep 1080 || true", check=False)
+            if "1080" not in socks5:
+                return False, "nym5 SOCKS5 port 1080 not listening"
+        elif mode == "nym2":
+            tun_check = ssh_run(client_ssh, "ip link show tun1 2>/dev/null || true", check=False)
+            if "tun1" not in tun_check:
+                return False, "nym2 tun1 interface not present"
+
+        if mode in ("nym2", "nym5"):
+            status = ssh_run(client_ssh, "timeout 8 nym-vpnc status 2>&1 || echo TIMEOUT", check=False)
+            if "TIMEOUT" in status or "Failed to create RPC client" in status:
+                return False, f"nym-vpnc status unresponsive ({status.strip()[:80]!r})"
     except Exception as e:
         return False, f"ssh unreachable: {e}"
-
-    if mode == "nym5":
-        socks5 = ssh_run(client_ssh, "ss -tnlp 2>/dev/null | grep 1080 || true", check=False)
-        if "1080" not in socks5:
-            return False, "nym5 SOCKS5 port 1080 not listening"
-    elif mode == "nym2":
-        tun_check = ssh_run(client_ssh, "ip link show tun1 2>/dev/null || true", check=False)
-        if "tun1" not in tun_check:
-            return False, "nym2 tun1 interface not present"
-
-    if mode in ("nym2", "nym5"):
-        status = ssh_run(client_ssh, "timeout 8 nym-vpnc status 2>&1 || echo TIMEOUT", check=False)
-        if "TIMEOUT" in status or "Failed to create RPC client" in status:
-            return False, f"nym-vpnc status unresponsive ({status.strip()[:80]!r})"
 
     return True, ""
 
 
+def _hcloud_reset(client_id: str) -> tuple[bool, str]:
+    """
+    Submit `hcloud server reset <client_id>` with two reliability layers:
+
+    1. Per-server exclusive file lock (/tmp/hcloud_reset_{id}.lock, fcntl LOCK_EX)
+       so no two callers ever fire overlapping resets on the same VM. The lock
+       is held only for the duration of the hcloud subprocess call — distinct
+       VMs lock independently and reset in parallel. The same lock file is used
+       by run_stage.sh's ensure_client_reachable (via bash flock) so bash and
+       Python callers are mutually exclusive on the same server.
+
+    2. Retry on "resource is locked" — a transient Hetzner API state meaning an
+       op is already in progress on this server (a peer may have fired a reset,
+       or the user ran one manually). We back off and retry instead of failing,
+       because the lock will clear once the in-flight action completes.
+
+    Returns (ok: bool, fail_reason: str).
+    """
+    hcloud = shutil.which("hcloud") or "hcloud"
+    lock_path = Path(f"/tmp/hcloud_reset_{client_id}.lock")
+    lock_path.touch(exist_ok=True)
+
+    delay = _HCLOUD_RESET_LOCKED_BACKOFF_BASE
+    for attempt in range(1, _HCLOUD_RESET_MAX_LOCKED_RETRIES + 1):
+        # Acquire LOCK_EX only for the subprocess call; released on fd close
+        # so other VMs (different lock files) proceed in parallel.
+        with open(lock_path, "a") as lock_fh:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+            try:
+                result = subprocess.run(
+                    [hcloud, "server", "reset", client_id],
+                    capture_output=True, text=True,
+                    timeout=_HCLOUD_RESET_CMD_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                return (False,
+                        f"hcloud_reset_timeout_after_{_HCLOUD_RESET_CMD_TIMEOUT}s")
+            except Exception as e:
+                return False, f"hcloud_reset_exception: {e}"
+            # lock_fh.__exit__ closes fd → LOCK_EX released here
+
+        if result.returncode == 0:
+            return True, ""
+
+        stderr = result.stderr.strip()
+        if "locked" in stderr.lower():
+            if attempt >= _HCLOUD_RESET_MAX_LOCKED_RETRIES:
+                return (False,
+                        f"hcloud_reset_still_locked_after_{attempt}_retries: "
+                        f"{stderr[:200]}")
+            print(f"  [hcloud] {client_id}: resource locked "
+                  f"(attempt {attempt}/{_HCLOUD_RESET_MAX_LOCKED_RETRIES})"
+                  f" — retrying in {delay}s")
+            time.sleep(delay)
+            delay = min(delay * 2, _HCLOUD_RESET_LOCKED_BACKOFF_MAX)
+        else:
+            return (False,
+                    f"hcloud_reset_failed (rc={result.returncode}): {stderr[:200]}")
+
+    return False, "hcloud_reset_max_retries_exceeded"  # not reachable
+
+
 def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
     """
-    Bounded recovery for a wedged client. Tries soft recovery (SSH still
-    reachable, restart nym-vpnd + reapply route) first; falls back to hard
-    recovery (hcloud reset, out-of-band of the broken network path) only if
-    SSH itself doesn't come back within a short bounded retry window.
+    PROPOSED (2026-07-12, NOT YET APPLIED — see
+    patches/09_nym_watchdog_mode_aware.md): thin wrapper around
+    _recover_wedged_client_impl() (all actual recovery logic, unchanged —
+    see its docstring) that holds /tmp/nym_collection_active for the
+    duration of recovery on nym5/nym2, via _set_nym_collection_lock(), so
+    nym_watchdog.sh backs off instead of racing this function's own Tier 1a
+    nym-vpnc reconnect. try/finally guarantees the lock is cleared
+    regardless of which of the impl's several return points was hit, or
+    whether it raised.
+    """
+    if mode in ("nym5", "nym2"):
+        _set_nym_collection_lock(client_cfg, True)
+    try:
+        return _recover_wedged_client_impl(client_id, client_cfg, mode)
+    finally:
+        if mode in ("nym5", "nym2"):
+            _set_nym_collection_lock(client_cfg, False)
+
+
+def _recover_wedged_client_impl(client_id: str, client_cfg: dict, mode: str) -> tuple[bool, str, paramiko.SSHClient | None]:
+    """
+    Three-tier recovery escalation. Each tier is only reached if the previous
+    one failed — hcloud reset is the last resort, not the first.
+
+    Tier 1a — nym connection reconnect (nym5/nym2 only, SSH reachable,
+      nym-vpnd active): the common mass-hang trigger is a transient nym
+      gateway lookup failure that leaves nym-vpnd running but SOCKS5 in
+      State:Disabled / no tun. nym-vpnc reconnect + socks5 enable fixes it
+      without touching the VM or the service. Retried _NYM_RECONNECT_RETRIES
+      times with a short gap (gateway service may still be recovering).
+
+    Tier 1b — service restart (SSH reachable, all modes): nym-vpnd crashed or
+      Tier 1a exhausted. systemctl restart nym-vpnd + route reapplication.
+      Slower than reconnect but doesn't need an out-of-band API call.
+
+    Tier 2 — hcloud reset (SSH unreachable or both soft tiers failed):
+      _hcloud_reset() serializes per-server and retries on "resource is locked"
+      so concurrent recovery attempts on the same VM don't collide.
 
     Returns (recovered, method, new_client_ssh). new_client_ssh is None if
-    recovery failed — callers must not assume the old client_ssh is usable
-    either way and should always use the returned connection.
+    recovery failed — callers must not assume the old client_ssh is usable.
+
+    Called only via recover_wedged_client() above, which holds the
+    nym-watchdog collection lock around this call — do not call this
+    function directly for nym5/nym2.
     """
     host = client_cfg["host"]
 
-    # ── Tier 1: soft — is SSH actually reachable right now? ───────────────
+    # ── Attempt SSH connection ─────────────────────────────────────────────
     ssh = None
     for attempt in range(_SOFT_WEDGE_SSH_RETRIES):
         try:
@@ -814,43 +1304,120 @@ def recover_wedged_client(client_id: str, client_cfg: dict, mode: str) -> tuple[
                 time.sleep(_SOFT_WEDGE_SSH_RETRY_DELAY)
 
     if ssh is not None:
-        print(f"  [wedge-recovery] {client_id}: SSH reachable — soft recovery "
-              f"(restart nym-vpnd, reapply route)")
-        try:
-            ssh_run(ssh, "systemctl restart nym-vpnd", check=False)
-            if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER:
-                ssh_run(ssh, "ip route replace default via 10.0.0.1 dev enp7s0 "
-                             "proto static onlink", check=False)
-            healthy, reason = _poll_until_healthy(ssh, mode)
-            if healthy:
-                return True, "soft_restart_nym_vpnd", ssh
-            print(f"  [wedge-recovery] {client_id}: still unhealthy after soft "
-                  f"recovery ({reason}) — escalating to hard recovery")
-        except Exception as e:
-            print(f"  [wedge-recovery] {client_id}: soft recovery action failed: {e} "
-                  f"— escalating to hard recovery")
+        # ── Tier 1a: nym-vpnc reconnect (nym5/nym2, nym-vpnd active) ──────────
+        # Skip for vpn/tor — they have no nym-vpnc, and check_client_health
+        # for those modes only tests SSH echo, which is already up here.
+        if mode in ("nym5", "nym2"):
+            for conn_attempt in range(1, _NYM_RECONNECT_RETRIES + 1):
+                # ssh_run can raise (TimeoutError/SSHException) even with
+                # check=False — that only suppresses non-zero exit codes, not
+                # a dead channel. Uncaught here, this used to crash the whole
+                # coordinator process for this client with no fallback to
+                # Tier 1b/2 at all — confirmed live (2026-07-04, nym5-client2
+                # vanished mid-recovery with an unhandled TimeoutError
+                # traceback). Treat it as "ssh is gone", not a bug to raise.
+                try:
+                    vpnd_active = "active" == ssh_run(
+                        ssh,
+                        "systemctl is-active nym-vpnd 2>/dev/null || echo inactive",
+                        check=False,
+                    ).strip()
+                except Exception as e:
+                    print(f"  [wedge-recovery] {client_id}: ssh died checking "
+                          f"nym-vpnd status ({e}) — falling through to service restart")
+                    ssh = None
+                    break
+                if not vpnd_active:
+                    print(f"  [wedge-recovery] {client_id}: nym-vpnd not active "
+                          f"— skipping reconnect, going to service restart")
+                    break
+                print(f"  [wedge-recovery] {client_id}: nym-vpnd active but "
+                      f"SOCKS5/tun down — nym-vpnc reconnect "
+                      f"(attempt {conn_attempt}/{_NYM_RECONNECT_RETRIES})")
+                # nohup'd + reassert-and-reopen pattern (see comment on
+                # _NYM_TIER1A_RECONNECT_WAIT_S): reconnect is dispatched to a
+                # detached background script so it survives its own channel
+                # dying, and SSH-safety is reasserted unconditionally inside
+                # that same script rather than over a channel that may
+                # already be gone by the time a follow-up command is sent.
+                socks5_line = (
+                    "nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 "
+                    "--exit-random 2>/dev/null || true\n" if mode == "nym5" else ""
+                )
+                tier1a_script = (
+                    "nym-vpnc reconnect 2>/dev/null || true\n"
+                    + socks5_line
+                    + "/usr/local/bin/nym-post-connect.sh 2>/dev/null || true\n"
+                )
+                try:
+                    sftp = ssh.open_sftp()
+                    with sftp.file("/tmp/nym_tier1a_reconnect.sh", "w") as fh:
+                        fh.write(tier1a_script)
+                    sftp.close()
+                    ssh_run(ssh, "nohup bash /tmp/nym_tier1a_reconnect.sh "
+                                 "> /tmp/nym_tier1a_reconnect.log 2>&1 &", check=False)
+                except Exception as e:
+                    print(f"  [wedge-recovery] {client_id}: failed to dispatch "
+                          f"reconnect script: {e}")
+                try:
+                    ssh.close()
+                except Exception:
+                    pass
+                time.sleep(_NYM_TIER1A_RECONNECT_WAIT_S)
+                try:
+                    ssh = ssh_connect(client_cfg)
+                except Exception as e:
+                    print(f"  [wedge-recovery] {client_id}: SSH did not come back "
+                          f"after reconnect dispatch: {e}")
+                    ssh = None
+                    break
+                healthy, reason = _poll_until_healthy(ssh, mode)
+                if healthy:
+                    return True, "soft_nym_reconnect", ssh
+                print(f"  [wedge-recovery] {client_id}: reconnect attempt "
+                      f"{conn_attempt}/{_NYM_RECONNECT_RETRIES} failed ({reason})"
+                      + (" — retrying" if conn_attempt < _NYM_RECONNECT_RETRIES
+                         else " — falling through to service restart"))
+                if conn_attempt < _NYM_RECONNECT_RETRIES:
+                    time.sleep(_NYM_RECONNECT_RETRY_DELAY_S)
+
+        # ── Tier 1b: service restart (all modes) ──────────────────────────────
+        # ssh can be None here if Tier 1a's post-reconnect SSH reopen failed
+        # (see the `ssh = None; break` above) — one more reconnect attempt
+        # before giving up on soft recovery entirely and escalating to hcloud.
+        if ssh is None:
+            try:
+                ssh = ssh_connect(client_cfg)
+            except Exception:
+                ssh = None
+        if ssh is None:
+            print(f"  [wedge-recovery] {client_id}: SSH unreachable — "
+                  f"escalating to hcloud reset")
+        else:
+            print(f"  [wedge-recovery] {client_id}: restarting nym-vpnd service")
+            try:
+                ssh_run(ssh, "systemctl restart nym-vpnd", check=False)
+                if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER:
+                    ssh_run(ssh, "ip route replace default via 10.0.0.1 dev enp7s0 "
+                                 "proto static onlink", check=False)
+                healthy, reason = _poll_until_healthy(ssh, mode)
+                if healthy:
+                    return True, "soft_restart_nym_vpnd", ssh
+                print(f"  [wedge-recovery] {client_id}: still unhealthy after service "
+                      f"restart ({reason}) — escalating to hcloud reset")
+            except Exception as e:
+                print(f"  [wedge-recovery] {client_id}: service restart failed: {e} "
+                      f"— escalating to hcloud reset")
         try:
             ssh.close()
         except Exception:
             pass
 
-    # ── Tier 2: hard — SSH unreachable or soft recovery didn't restore health ──
-    print(f"  [wedge-recovery] {client_id}: attempting hcloud reset "
-          f"(host={host})")
-    hcloud = shutil.which("hcloud") or "hcloud"
-    try:
-        # hcloud CLI polls the reset action to completion before returning —
-        # observed taking ~30s in practice, so a 30s subprocess timeout was
-        # razor's-edge and intermittently aborted the call right as it would
-        # have succeeded, permanently failing recovery for no real reason.
-        result = subprocess.run(
-            [hcloud, "server", "reset", client_id],
-            capture_output=True, text=True, timeout=90,
-        )
-        if result.returncode != 0:
-            return False, f"hcloud_reset_failed: {result.stderr.strip()[:200]}", None
-    except Exception as e:
-        return False, f"hcloud_reset_exception: {e}", None
+    # ── Tier 2: hcloud reset — SSH unreachable or soft recovery exhausted ──────
+    print(f"  [wedge-recovery] {client_id}: attempting hcloud reset (host={host})")
+    ok, fail_reason = _hcloud_reset(client_id)
+    if not ok:
+        return False, fail_reason, None
 
     deadline = time.time() + _HARD_WEDGE_REBOOT_WAIT_S
     ssh = None
@@ -901,6 +1468,7 @@ class VisitRecord:
     ingress_packets: int = 0    # zero-ingress guard: see count_pcap_packets()
     circuit_info:    str = ""   # guard/gateway logged after circuit rotation
     tun1_ip:         str = ""   # nym2 only: dynamic tun1 IP used for BPF + direction
+    backfill:        bool = False
 
 
 def run_single_visit(url: str, mode: str,
@@ -909,7 +1477,8 @@ def run_single_visit(url: str, mode: str,
                      visit_id: str,
                      client_id: str,
                      rotate_circuits: bool = False,
-                     client_cfg: dict | None = None) -> VisitRecord:
+                     client_cfg: dict | None = None,
+                     backfill: bool = False) -> VisitRecord:
     """
     Full lifecycle for one visit:
       0. (Optional) Rotate circuit — NEWNYM for Tor, reconnect for Nym
@@ -933,16 +1502,26 @@ def run_single_visit(url: str, mode: str,
     bpf_out = BPF_EGRESS[mode]
     tun1_ip = ""
 
+    # ── Step -1: Acquire collection lock (nym modes only), BEFORE rotation ──
+    # PROPOSED (2026-07-12, NOT YET APPLIED — see
+    # patches/09_nym_watchdog_mode_aware.md): moved earlier than before
+    # (previously acquired only after rotation, as "Step 0b"). Closes a gap
+    # where nym_watchdog.sh could race maybe_rotate_circuit()'s own nym-vpnc
+    # reconnect the same way it could race recover_wedged_client()'s — see
+    # that function's own patch note for the same race, discovered via
+    # nym5-client2 repeatedly coming back in the wrong tunnel mode. Uses the
+    # CURRENT client_ssh (about to be replaced by rotate_circuit_nym for nym
+    # modes) — the lock file persists on the VM's filesystem regardless of
+    # which SSH session touched it, so touching it here before the old
+    # connection closes is safe.
+    if mode in ("nym5", "nym2"):
+        ssh_run(client_ssh, "touch /tmp/nym_collection_active", check=False)
+
     # ── Step 0: Rotate circuit (Tor NEWNYM / Nym reconnect) ───────────────
     # For nym modes, rotate_circuit_nym closes client_ssh and returns a new one.
     circuit_info, client_ssh = maybe_rotate_circuit(
         client_ssh, client_cfg or {}, mode, rotate_circuits, client_id
     )
-
-    # ── Step 0b: Acquire collection lock (nym modes only) ─────────────────
-    # Prevents the nym_watchdog.service from reconnecting mid-visit.
-    if mode in ("nym5", "nym2"):
-        ssh_run(client_ssh, "touch /tmp/nym_collection_active", check=False)
 
     # ── Step 0c: nym2 — log tun1 IP for debugging ─────────────────────────
     # BPF captures outer WireGuard UDP from the static physical IPs — no
@@ -989,7 +1568,16 @@ def run_single_visit(url: str, mode: str,
                     bpf_in,
                     ingress_remote,
                 )
-            except RuntimeError as e:
+            except Exception as e:
+                # Was `except RuntimeError` only — a bounded-timeout
+                # exception (socket.timeout / SSHException) from ssh_run is
+                # neither, so it used to die silently inside this thread:
+                # the thread exits, join() returns normally, and the
+                # caller's err-box check below never fires. Router-side
+                # failures here are intentionally NOT routed into client
+                # wedge-recovery (rebooting the client VM doesn't fix a
+                # hung/misconfigured router) — they still just skip this
+                # visit, but now visibly instead of vanishing.
                 ingress_err_box[0] = e
 
         def start_egress():
@@ -1000,7 +1588,7 @@ def run_single_visit(url: str, mode: str,
                     bpf_out,
                     egress_remote,
                 )
-            except RuntimeError as e:
+            except Exception as e:
                 egress_err_box[0] = e
 
         t_in  = threading.Thread(target=start_ingress)
@@ -1011,10 +1599,24 @@ def run_single_visit(url: str, mode: str,
         if ingress_err_box[0] or egress_err_box[0]:
             err = ingress_err_box[0] or egress_err_box[0]
             print(f"  [error] tshark failed to start: {err} — skipping")
-            for pid, ssh in [(ingress_pid_box[0], ingress_ssh),
-                             (egress_pid_box[0],  egress_ssh)]:
+            # Whichever side DID start must still be stopped — each wrapped
+            # independently so a failure stopping one side never prevents an
+            # attempt on the other, and never raises uncaught out of this
+            # function. This exact gap orphaned the tshark process on the
+            # side that started fine while the other side failed: confirmed
+            # live (2026-07-04) as the source of 52 leaked egress captures
+            # that then choked out nearly all new capture starts on that
+            # router (the bare stop_remote_capture() call here had no
+            # try/except, unlike the normal-path stop_ingress/stop_egress
+            # closures below).
+            for label, pid, ssh in [("ingress", ingress_pid_box[0], ingress_ssh),
+                                     ("egress",  egress_pid_box[0],  egress_ssh)]:
                 if pid:
-                    stop_remote_capture(ssh, pid)
+                    try:
+                        stop_remote_capture(ssh, pid)
+                    except Exception as e:
+                        print(f"  [warn] stop_remote_capture({label}) failed "
+                              f"after start failure: {e}")
             if mode in ("nym5", "nym2"):
                 ssh_run(client_ssh, "rm -f /tmp/nym_collection_active", check=False)
             return VisitRecord(
@@ -1037,7 +1639,17 @@ def run_single_visit(url: str, mode: str,
         time.sleep(2.0)  # ensure tshark is fully up before triggering visit
         print(f"  [capture] started — ingress PID {ingress_pid}, egress PID {egress_pid}")
 
-        # ── Trigger the browser visit ─────────────────────────────────────
+        # ── Trigger the browser visit, captures guaranteed to stop after ───
+        # trigger_visit (or anything else in this block) raising used to skip
+        # the "Stop captures" step entirely — the exception propagates out of
+        # run_single_visit straight past it, leaking both tshark processes on
+        # every mid-visit exception. Confirmed live (2026-07-04) as the
+        # source of 52 orphaned egress tshark processes that then choked out
+        # nearly all new capture starts on that router (skipped_tshark_failed
+        # hit 93% of nym2 visits). try/finally guarantees the stop always
+        # runs, exception or not — the exception still propagates afterward
+        # for the caller's existing wedge-detection to handle.
+        #
         # No blind same-process retry here on PROXY_CONNECTION_REFUSED: a
         # proxy refusing connections mid-visit means the SOCKS5 listener
         # itself is down, and retrying without restarting nym-vpnd just
@@ -1045,27 +1657,38 @@ def run_single_visit(url: str, mode: str,
         # instead so the caller's wedge-aware loop (preflight checks use the
         # same path) can actually fix it — restart nym-vpnd, poll for
         # health, requeue this same visit_id — before trying again.
-        proxy = PROXY_MAP.get(mode)
-        visit_meta = trigger_visit(client_ssh, url, proxy, visit_id, mode)
-        t_visit_start = visit_meta.get("t_start", time.time())
-        t_visit_end   = visit_meta.get("t_end",   time.time())
-        visit_status  = visit_meta.get("status",  "unknown")
+        try:
+            proxy = PROXY_MAP.get(mode)
+            visit_meta = trigger_visit(client_ssh, url, proxy, visit_id, mode)
+            t_visit_start = visit_meta.get("t_start", time.time())
+            t_visit_end   = visit_meta.get("t_end",   time.time())
+            visit_status  = visit_meta.get("status",  "unknown")
 
-        print(f"  [visit]   {visit_status} — {visit_meta.get('duration_s', '?')}s")
-        time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
+            print(f"  [visit]   {visit_status} — {visit_meta.get('duration_s', '?')}s")
+            time.sleep(3.0)  # ensures trailing packets are captured before tshark is killed
+        finally:
+            # Best-effort cleanup (router-side, not part of client wedge
+            # detection) — but an uncaught exception inside a Thread target
+            # dies silently (join() returns normally either way), so a bounded-
+            # timeout exception from a hung router would otherwise vanish
+            # without a trace. Catch and log instead of letting it disappear.
+            def stop_ingress():
+                try:
+                    stop_remote_capture(ingress_ssh, ingress_pid)
+                except Exception as e:
+                    print(f"  [warn] stop_remote_capture(ingress) failed: {e}")
 
-        # ── Stop captures ──────────────────────────────────────────────────
-        def stop_ingress():
-            stop_remote_capture(ingress_ssh, ingress_pid)
+            def stop_egress():
+                try:
+                    stop_remote_capture(egress_ssh, egress_pid)
+                except Exception as e:
+                    print(f"  [warn] stop_remote_capture(egress) failed: {e}")
 
-        def stop_egress():
-            stop_remote_capture(egress_ssh, egress_pid)
-
-        s_in  = threading.Thread(target=stop_ingress)
-        s_out = threading.Thread(target=stop_egress)
-        s_in.start(); s_out.start()
-        s_in.join();  s_out.join()
-        t_capture_end = time.time()
+            s_in  = threading.Thread(target=stop_ingress)
+            s_out = threading.Thread(target=stop_egress)
+            s_in.start(); s_out.start()
+            s_in.join();  s_out.join()
+            t_capture_end = time.time()
 
         # ── Pull pcaps locally (retry once on transient SCP failure) ──────
         scp_get_with_retry(ingress_ssh, ingress_remote, ingress_local)
@@ -1116,6 +1739,7 @@ def run_single_visit(url: str, mode: str,
         ingress_packets = ingress_packet_count,
         circuit_info    = circuit_info,
         tun1_ip         = tun1_ip,
+        backfill        = backfill,
     )
 
 
@@ -1125,7 +1749,9 @@ def run_dataset(url_list_path: str, mode: str,
                 visits_per_url: int, output_dir: Path,
                 client_id: str,
                 rotate_circuits: bool = False,
-                rotate_every: int = 1):
+                rotate_every: int = 1,
+                backfill_urls_path: str | None = None,
+                backfill_stop_file: str | None = None):
     """
     Iterates over URLs × visits, calls run_single_visit for each,
     and appends VisitRecords to a .jsonl metadata log.
@@ -1192,7 +1818,34 @@ def run_dataset(url_list_path: str, mode: str,
 
         # Build per-URL success counts from existing log so a restarted run
         # skips visits that already completed without re-collecting them.
-        completed_counts: dict[str, int] = {}  # url → successful visit count
+        #
+        # PROPOSED (2026-07-12, NOT YET APPLIED — see
+        # patches/08_per_client_resume_counts.md): completed_counts must be
+        # scoped to THIS client only. nym5_visits.jsonl/nym2_visits.jsonl are
+        # SHARED across both clients of a mode (both append to the same
+        # log_path), but the quota (VISITS_LIGHT=48, see
+        # docs/CAMPAIGN_RUNBOOK.md) is defined per-client, independently —
+        # confirmed: 265 URLs x 48 visits/client/URL x 2 clients = 25,440
+        # flows/mode, the documented target. Before this fix, completed_counts
+        # pooled BOTH clients' successes per URL — harmless while both
+        # processes run continuously from early in the round (each client's
+        # own resume-skip loop only reads this once at its own process start,
+        # so it doesn't matter what the OTHER client adds afterward), but a
+        # fresh restart after one client has already finished and the other
+        # is still mid-quota sees the pooled count already >= 48 for nearly
+        # every URL and false-skips everything, instantly believing it's
+        # done. Confirmed live (2026-07-12, round_03): nym5-client1 had done
+        # 47-48/URL (genuinely done), nym5-client2 only 15-21/URL of its OWN
+        # visits (genuinely not done) — but the pooled combined count (62-67)
+        # was already past 48, so both clients skipped every visit on
+        # restart. The vid.startswith() check below is the only change: only
+        # count a success toward THIS client's completed_counts if the
+        # visit_id it's logged under actually belongs to this client_id
+        # (visit_ids are always f"{client_id}_v{serial}" or
+        # f"{client_id}_bf{serial}" — see VisitRecord construction — so this
+        # is an exact, unambiguous match, not a prefix-collision risk between
+        # client_ids in CLIENTS).
+        completed_counts: dict[str, int] = {}  # url → THIS client's successful visit count
         serial = 0
         if log_path.exists():
             with log_path.open() as f:
@@ -1205,7 +1858,10 @@ def run_dataset(url_list_path: str, mode: str,
                         vid = rec.get("visit_id", "")
                         if "_v" in vid:
                             serial = max(serial, int(vid.split("_v")[-1]))
-                        if rec.get("visit_status") == "success":
+                        elif "_bf" in vid:
+                            serial = max(serial, int(vid.split("_bf")[-1]))
+                        if (rec.get("visit_status") == "success"
+                                and vid.startswith(f"{client_id}_")):
                             url_key = rec.get("url", "")
                             if url_key:
                                 completed_counts[url_key] = completed_counts.get(url_key, 0) + 1
@@ -1213,8 +1869,9 @@ def run_dataset(url_list_path: str, mode: str,
                         continue
             n_done = sum(completed_counts.values())
             if n_done:
-                print(f"[coordinator] resuming: {n_done}/{total} visits already collected "
-                      f"(max serial={serial})")
+                print(f"[coordinator] resuming: {n_done}/{total} of THIS client's visits "
+                      f"already collected (max serial={serial}, serial is shared "
+                      f"across both clients of this mode)")
 
         done_total  = sum(completed_counts.values())
         visit_count = 0  # new visits dispatched in this run
@@ -1226,6 +1883,7 @@ def run_dataset(url_list_path: str, mode: str,
         zero_success_alert_active = False   # avoid re-alerting every visit while still breached
         recent_outcomes: deque[bool] = deque(maxlen=SUCCESS_RATE_ALERT_WINDOW_N)
         success_rate_alert_active = False
+        router_down_alert_active = False    # PROPOSED — same one-alert-per-outage pattern
 
         for url in urls:
             for visit_num in range(visits_per_url):
@@ -1263,6 +1921,32 @@ def run_dataset(url_list_path: str, mode: str,
 
                     healthy = False
                     wedge_reason = None
+
+                    # PROPOSED — see ensure_router_ssh()'s docstring/comment
+                    # for why this blocks-with-backoff instead of routing
+                    # through the client wedge counter below: a dead router
+                    # blocks every client sharing it, not just this one.
+                    try:
+                        ingress_ssh = ensure_router_ssh(ingress_ssh, INGRESS_ROUTER, "ingress")
+                        egress_ssh  = ensure_router_ssh(egress_ssh,  EGRESS_ROUTER,  "egress")
+                        if router_down_alert_active:
+                            print(f"  [router-ssh] router SSH recovered — resuming {client_id}")
+                            router_down_alert_active = False
+                    except Exception as e:
+                        if not router_down_alert_active:
+                            fire_alert(
+                                output_dir,
+                                f"{client_id} ({mode}): router SSH unreachable ({e}) — "
+                                f"this blocks ALL clients on this router, not just "
+                                f"{client_id}. Blocking and retrying every "
+                                f"{_ROUTER_SSH_DOWN_POLL_S}s until it recovers "
+                                f"(this alert will not repeat until it does).",
+                            )
+                            router_down_alert_active = True
+                        time.sleep(_ROUTER_SSH_DOWN_POLL_S)
+                        visit_attempt -= 1   # this attempt never actually ran
+                        continue
+
                     if not (client_ssh.get_transport() and client_ssh.get_transport().is_active()):
                         # A dead transport here means SSH is unreachable right
                         # now — exactly what the wedge loop below exists to
@@ -1297,8 +1981,23 @@ def run_dataset(url_list_path: str, mode: str,
                         except Exception as e:
                             wedge_reason = f"mid-visit exception: {e}"
 
+                    vm_hang = wedge_reason is not None and is_vm_hang_reason(wedge_reason)
                     print(f"  [wedge] {client_id}: {wedge_reason} "
-                          f"(attempt {visit_attempt}/{WEDGE_MAX_RECOVERY_ATTEMPTS + 1})")
+                          f"(attempt {visit_attempt}/{WEDGE_MAX_RECOVERY_ATTEMPTS + 1})"
+                          + ("  *** VM-HANG ***" if vm_hang else ""))
+                    if vm_hang:
+                        # Unlike routine soft wedges (silent on success — see
+                        # the "Threshold alerting" header comment), a full
+                        # VM hang is rare and severe enough that an
+                        # unattended multi-day run needs a trail of every
+                        # occurrence, not just failures.
+                        print(f"  [wedge] VM-hang detected on {client_id} ({mode}) "
+                              f"=> attempting recovery (reason: {wedge_reason})")
+                        fire_alert(
+                            output_dir,
+                            f"VM-hang detected on {client_id} ({mode}) => "
+                            f"attempting recovery (reason: {wedge_reason})",
+                        )
 
                     if visit_attempt > WEDGE_MAX_RECOVERY_ATTEMPTS:
                         print(f"  [wedge] {client_id}: giving up after "
@@ -1335,17 +2034,26 @@ def run_dataset(url_list_path: str, mode: str,
                         client_ssh = new_ssh
                         print(f"  [wedge] {client_id}: recovered via {method} — "
                               f"requeuing visit {visit_id}")
+                        if vm_hang:
+                            # Outcome trail for the VM-hang case specifically
+                            # — logged even on success, unlike routine wedges.
+                            fire_alert(
+                                output_dir,
+                                f"VM-hang on {client_id} ({mode}): recovery "
+                                f"SUCCEEDED via {method} — resuming visit {visit_id}",
+                            )
                     else:
                         print(f"  [wedge] {client_id}: recovery attempt failed "
                               f"({method}) — retrying")
                         # Alert condition 1: a recovery attempt that failed.
                         # A wedge that recovers cleanly must NOT alert — only
-                        # this branch (recovered=False) does.
+                        # this branch (recovered=False) does (VM-hang success
+                        # is the one exception, handled above).
                         fire_alert(
                             output_dir,
-                            f"{client_id} ({mode}): recovery attempt failed "
-                            f"(method={method}) for visit {visit_id} — "
-                            f"reason: {wedge_reason}",
+                            f"{'VM-hang on ' if vm_hang else ''}{client_id} ({mode}): "
+                            f"recovery attempt failed (method={method}) for visit "
+                            f"{visit_id} — reason: {wedge_reason}",
                         )
 
                 # ── Threshold alerts 2 & 3: evaluated once per completed visit
@@ -1410,6 +2118,124 @@ def run_dataset(url_list_path: str, mode: str,
             print(f"[coordinator] *** alerts were fired during this run — "
                   f"see {alerts_log} ***")
 
+        # ── Backfill loop ──────────────────────────────────────────────────
+        # Enabled only when --backfill-urls and --backfill-stop-file are both
+        # set (run_stage.sh passes them when BACKFILL=1). Cycles through the
+        # shared URLs continuously, stopping as soon as the sentinel file
+        # appears (created by the nym5 monitor in run_stage.sh). Uses the same
+        # wedge-recovery machinery as the primary loop; visits are tagged
+        # backfill=True so the budget tracker and dataset builder can
+        # distinguish them.
+        if backfill_urls_path and backfill_stop_file:
+            bf_stop = Path(backfill_stop_file)
+            if bf_stop.exists():
+                print(f"[coordinator] backfill: stop file already present — skipping")
+            else:
+                bf_urls = [URL_BASE[mode] + "/" + l.strip()
+                           for l in Path(backfill_urls_path).read_text().splitlines()
+                           if l.strip() and not l.startswith("#")]
+                if not bf_urls:
+                    print(f"[coordinator] backfill: no URLs in {backfill_urls_path!r} — skipping")
+                else:
+                    print(f"[coordinator] backfill start: cycling {len(bf_urls)} URL(s), "
+                          f"stop when {backfill_stop_file!r} exists")
+                    bf_count = 0
+                    bf_status: dict[str, int] = defaultdict(int)
+                    for url in itertools.cycle(bf_urls):
+                        if bf_stop.exists():
+                            break
+                        serial += 1
+                        bf_count += 1
+                        visit_id = f"{client_id}_bf{serial:05d}"
+                        should_rotate = rotate_circuits and ((serial - 1) % rotate_every == 0)
+                        print(f"[bf {bf_count}] {visit_id} — {url}")
+
+                        visit_attempt = 0
+                        while True:
+                            if bf_stop.exists():
+                                break
+                            visit_attempt += 1
+                            healthy = False
+                            wedge_reason = None
+
+                            # PROPOSED — mirrors the primary loop's router
+                            # check above; see ensure_router_ssh().
+                            try:
+                                ingress_ssh = ensure_router_ssh(ingress_ssh, INGRESS_ROUTER, "ingress")
+                                egress_ssh  = ensure_router_ssh(egress_ssh,  EGRESS_ROUTER,  "egress")
+                                if router_down_alert_active:
+                                    print(f"  [router-ssh] router SSH recovered — resuming {client_id} backfill")
+                                    router_down_alert_active = False
+                            except Exception as e:
+                                if not router_down_alert_active:
+                                    fire_alert(
+                                        output_dir,
+                                        f"{client_id} ({mode}) backfill: router SSH unreachable "
+                                        f"({e}) — blocking and retrying every "
+                                        f"{_ROUTER_SSH_DOWN_POLL_S}s until it recovers "
+                                        f"(this alert will not repeat until it does).",
+                                    )
+                                    router_down_alert_active = True
+                                time.sleep(_ROUTER_SSH_DOWN_POLL_S)
+                                visit_attempt -= 1
+                                continue
+
+                            if not (client_ssh.get_transport() and
+                                    client_ssh.get_transport().is_active()):
+                                try:
+                                    client_ssh = retry_ssh_connect(CLIENTS[client_id])
+                                except Exception as e:
+                                    wedge_reason = f"reconnect failed: {e}"
+                            if wedge_reason is None:
+                                healthy, reason = check_client_health(client_ssh, mode)
+                                wedge_reason = None if healthy else f"preflight: {reason}"
+                            if healthy:
+                                try:
+                                    record = run_single_visit(
+                                        url, mode,
+                                        ingress_ssh, egress_ssh, client_ssh,
+                                        output_dir,
+                                        visit_id=visit_id,
+                                        client_id=client_id,
+                                        rotate_circuits=should_rotate,
+                                        client_cfg=CLIENTS[client_id],
+                                        backfill=True,
+                                    )
+                                    with log_path.open("a") as f:
+                                        f.write(json.dumps(asdict(record)) + "\n")
+                                    bf_status[record.visit_status] += 1
+                                    break
+                                except Exception as e:
+                                    wedge_reason = f"mid-visit exception: {e}"
+                            if visit_attempt > WEDGE_MAX_RECOVERY_ATTEMPTS:
+                                bf_status["WEDGE_UNRECOVERABLE"] += 1
+                                with log_path.open("a") as f:
+                                    f.write(json.dumps({
+                                        "visit_id": visit_id, "url": url, "mode": mode,
+                                        "visit_status": "WEDGE_UNRECOVERABLE",
+                                        "backfill": True,
+                                        "wedge_reason": wedge_reason,
+                                    }) + "\n")
+                                break
+                            recovered, method, new_ssh = recover_wedged_client(
+                                client_id, CLIENTS[client_id], mode
+                            )
+                            if recovered and new_ssh is not None:
+                                try:
+                                    client_ssh.close()
+                                except Exception:
+                                    pass
+                                client_ssh = new_ssh
+                            else:
+                                fire_alert(
+                                    output_dir,
+                                    f"{client_id} ({mode}) backfill: recovery attempt "
+                                    f"failed (method={method}) for visit {visit_id}",
+                                )
+                        time.sleep(2)
+                    print(f"[coordinator] backfill done: {bf_count} extra visits — "
+                          f"{dict(sorted(bf_status.items(), key=lambda kv: -kv[1]))}")
+
     finally:
         ssh_run(ingress_ssh, f"rm -rf {ingress_capture_subdir}", check=False)
         ssh_run(egress_ssh,  f"rm -rf {egress_capture_subdir}",  check=False)
@@ -1435,9 +2261,18 @@ if __name__ == "__main__":
                         help="Rotate only every Nth visit (default 1 = every visit, "
                              "same as before). Visits in between reuse the existing "
                              "circuit — no reconnect, no rotation sleep.")
+    parser.add_argument("--backfill-urls",      default=None,
+                        help="Path to file of bare URL paths to cycle through after "
+                             "primary collection finishes (enables backfill). "
+                             "Requires --backfill-stop-file.")
+    parser.add_argument("--backfill-stop-file", default=None,
+                        help="Sentinel file path; backfill stops when this file exists "
+                             "(created by the nym5 monitor in run_stage.sh).")
     args = parser.parse_args()
     if args.rotate_every < 1:
         parser.error("--rotate-every must be >= 1")
 
     run_dataset(args.urls, args.mode, args.visits, Path(args.output), args.client,
-                rotate_circuits=args.rotate_circuits, rotate_every=args.rotate_every)
+                rotate_circuits=args.rotate_circuits, rotate_every=args.rotate_every,
+                backfill_urls_path=args.backfill_urls,
+                backfill_stop_file=args.backfill_stop_file)

@@ -1,30 +1,26 @@
 #!/usr/bin/env bash
 # scripts/collect_quick_test.sh
 # ==============================
-# Quick end-to-end test: V=3 visits × small URL sets across all 5 modes.
+# Quick end-to-end test: V=3 visits × small URL sets across all 4 modes.
 # Validates the full pipeline (BPF filters, circuit rotation, port-per-mode
 # egress isolation, resume logic) before committing to a full collection run.
 #
 # URL sets:
-#   baseline / vpn / tor / nym2 : config/urls_quick_test.txt      (6 URLs)
-#   nym5                         : config/urls_quick_test_nym5.txt (4 URLs)
+#   vpn / tor  : config/urls_quick_test.txt      (6 URLs)
+#   nym5       : config/urls_quick_test_nym5.txt (4 URLs)
+#   nym2       : config/urls_quick_test_nym2.txt (4 URLs, no pdf/mp3/mp4)
 #
-# Collection order (port-per-mode egress isolation):
-#   Group 1 (simultaneous): baseline=port80  vpn=port8080  tor=port8081
-#   Then: nym5=port8082  (2 clients parallel)
-#   Then: nym2=port80    (2 clients parallel, safe after Group 1 finishes)
+# Collection: all 4 modes, both clients each, fully concurrent — each mode
+# has its own egress port (vpn=8080, tor=8081, nym5=8082, nym2=80), so there
+# are no BPF capture collisions and no staging groups are needed.
 #
 # Per-mode visit counts (V=3):
-#   baseline : 6 × 3 = 18 visits
-#   vpn      : 6 × 3 = 18 visits
-#   tor      : 6 × 3 = 18 visits × 2 clients = 36 total
-#   nym5     : 4 × 3 = 12 visits × 2 clients = 24 total
-#   nym2     : 6 × 3 = 18 visits × 2 clients = 36 total
+#   vpn  : 6 × 3 = 18 visits × 2 clients = 36 total
+#   tor  : 6 × 3 = 18 visits × 2 clients = 36 total
+#   nym5 : 4 × 3 = 12 visits × 2 clients = 24 total
+#   nym2 : 4 × 3 = 12 visits × 2 clients = 24 total
 #
-# Estimated wall time: ~45-60 minutes
-#   Group 1 : ~5 min  (tor is bottleneck at 18 × ~8s / 60)
-#   nym5    : ~25 min (4 URLs × 3 × ~43s × rotation overhead / 2 clients)
-#   nym2    : ~20 min (6 URLs × 3 × ~34s / 2 clients)
+# Estimated wall time: ~25-30 minutes (nym5 is the bottleneck)
 #
 # Prerequisites:
 #   bash scripts/setup_webserver_ports.sh   (run once to configure nginx)
@@ -38,10 +34,11 @@ set -euo pipefail
 
 URLS="config/urls_quick_test.txt"
 URLS_NYM5="config/urls_quick_test_nym5.txt"
+URLS_NYM2="config/urls_quick_test_nym2.txt"
 VISITS=3
 OUTPUT="data/quick_test"
 
-for f in "$URLS" "$URLS_NYM5"; do
+for f in "$URLS" "$URLS_NYM5" "$URLS_NYM2"; do
     if [[ ! -f "$f" ]]; then
         echo "[error] $f not found. Run from repo root."
         exit 1
@@ -50,33 +47,28 @@ done
 
 URLS_COUNT=$(grep -c "^[^#]" "$URLS")
 NYM5_COUNT=$(grep -c "^[^#]" "$URLS_NYM5")
+NYM2_COUNT=$(grep -c "^[^#]" "$URLS_NYM2")
 if [[ "$URLS_COUNT" -ne 6 ]]; then
     echo "[error] $URLS: expected 6 URLs, got $URLS_COUNT"; exit 1
 fi
 if [[ "$NYM5_COUNT" -ne 4 ]]; then
     echo "[error] $URLS_NYM5: expected 4 URLs, got $NYM5_COUNT"; exit 1
 fi
+if [[ "$NYM2_COUNT" -ne 4 ]]; then
+    echo "[error] $URLS_NYM2: expected 4 URLs, got $NYM2_COUNT"; exit 1
+fi
 
 mkdir -p "$OUTPUT"
 
 echo "========================================"
 echo " Quick test collection: V=$VISITS visits/URL"
-echo " URLs: baseline/vpn/tor/nym2=6  nym5=4"
+echo " URLs: vpn/tor=6  nym5=4  nym2=4"
 echo " Output: $OUTPUT"
-echo " Estimated wall time: ~45-60 minutes"
+echo " Estimated wall time: ~25-30 minutes"
 echo "========================================"
 
-# ── Group 1: baseline + vpn + tor (simultaneous) ─────────────────────────────
 echo ""
-echo "[$(date +%H:%M:%S)] Group 1 start: baseline + vpn + tor running simultaneously..."
-
-python3 -m collector.coordinator \
-    --mode    baseline \
-    --urls    "$URLS" \
-    --visits  "$VISITS" \
-    --output  "$OUTPUT" \
-    --client  client1 &
-PID_BASELINE=$!
+echo "[$(date +%H:%M:%S)] Concurrent start: vpn + tor + nym5 + nym2 (2 clients each) ..."
 
 python3 -m collector.coordinator \
     --mode    vpn \
@@ -84,7 +76,15 @@ python3 -m collector.coordinator \
     --visits  "$VISITS" \
     --output  "$OUTPUT" \
     --client  vpn-client1 &
-PID_VPN=$!
+PID_VPN1=$!
+
+python3 -m collector.coordinator \
+    --mode    vpn \
+    --urls    "$URLS" \
+    --visits  "$VISITS" \
+    --output  "$OUTPUT" \
+    --client  vpn-client2 &
+PID_VPN2=$!
 
 python3 -m collector.coordinator \
     --mode    tor \
@@ -101,16 +101,6 @@ python3 -m collector.coordinator \
     --output  "$OUTPUT" \
     --client  tor-client2 &
 PID_TOR2=$!
-
-wait $PID_BASELINE || echo "[baseline]    exited with error — continuing"
-wait $PID_VPN      || echo "[vpn]         exited with error — continuing"
-wait $PID_TOR1     || echo "[tor-client1] exited with error — continuing"
-wait $PID_TOR2     || echo "[tor-client2] exited with error — continuing"
-echo "[$(date +%H:%M:%S)] Group 1 done."
-
-# ── Nym5 (parallel clients) ───────────────────────────────────────────────────
-echo ""
-echo "[$(date +%H:%M:%S)] nym5 start (nym5-client1 + nym5-client2 in parallel, 4 URLs × $VISITS visits each)..."
 
 python3 -m collector.coordinator \
     --mode    nym5 \
@@ -130,18 +120,9 @@ python3 -m collector.coordinator \
     --rotate-circuits &
 PID_NYM5_2=$!
 
-wait $PID_NYM5_1 || echo "[nym5-client1] exited with error — continuing"
-wait $PID_NYM5_2 || echo "[nym5-client2] exited with error — continuing"
-echo "[$(date +%H:%M:%S)] nym5 done."
-
-# ── Nym2 (parallel clients, after nym5) ──────────────────────────────────────
-# Egress port 80 — safe because Group 1 (baseline also port 80) has finished.
-echo ""
-echo "[$(date +%H:%M:%S)] nym2 start (nym2-client1 + nym2-client2 in parallel, 6 URLs × $VISITS visits each)..."
-
 python3 -m collector.coordinator \
     --mode    nym2 \
-    --urls    "$URLS" \
+    --urls    "$URLS_NYM2" \
     --visits  "$VISITS" \
     --output  "$OUTPUT" \
     --client  nym2-client1 \
@@ -150,16 +131,22 @@ PID_NYM2_1=$!
 
 python3 -m collector.coordinator \
     --mode    nym2 \
-    --urls    "$URLS" \
+    --urls    "$URLS_NYM2" \
     --visits  "$VISITS" \
     --output  "$OUTPUT" \
     --client  nym2-client2 \
     --rotate-circuits &
 PID_NYM2_2=$!
 
+wait $PID_VPN1  || echo "[vpn-client1]  exited with error — continuing"
+wait $PID_VPN2  || echo "[vpn-client2]  exited with error — continuing"
+wait $PID_TOR1  || echo "[tor-client1]  exited with error — continuing"
+wait $PID_TOR2  || echo "[tor-client2]  exited with error — continuing"
+wait $PID_NYM5_1 || echo "[nym5-client1] exited with error — continuing"
+wait $PID_NYM5_2 || echo "[nym5-client2] exited with error — continuing"
 wait $PID_NYM2_1 || echo "[nym2-client1] exited with error — continuing"
 wait $PID_NYM2_2 || echo "[nym2-client2] exited with error — continuing"
-echo "[$(date +%H:%M:%S)] nym2 done."
+echo "[$(date +%H:%M:%S)] All modes done."
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
@@ -167,7 +154,7 @@ echo "========================================"
 echo " Quick test complete."
 echo ""
 echo " JSONL logs:"
-for mode in baseline vpn tor nym5 nym2; do
+for mode in vpn tor nym5 nym2; do
     log="$OUTPUT/${mode}_visits.jsonl"
     if [[ -f "$log" ]]; then
         total=$(grep -c . "$log" 2>/dev/null || echo 0)
@@ -179,7 +166,7 @@ for mode in baseline vpn tor nym5 nym2; do
 done
 echo ""
 echo " Pcap sizes:"
-for mode in baseline vpn tor nym5 nym2; do
+for mode in vpn tor nym5 nym2; do
     dir="$OUTPUT/$mode"
     if [[ -d "$dir" ]]; then
         count=$(ls "$dir"/*.pcap 2>/dev/null | wc -l)

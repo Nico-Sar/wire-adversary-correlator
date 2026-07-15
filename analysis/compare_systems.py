@@ -2,7 +2,7 @@
 analysis/compare_systems.py
 ============================
 Generates the main thesis comparison figure:
-PR-AUC of the correlator across Nym, Tor, VPN, and Baseline.
+PR-AUC of the correlator across Nym, Tor, and VPN.
 
 This is the core result of the thesis — quantifying how much correlation
 signal survives each anonymity system at the TCP/IP wire layer.
@@ -11,8 +11,7 @@ Usage:
   python analysis/compare_systems.py \
       --nym      results/nym_eval.json \
       --tor      results/tor_eval.json \
-      --vpn      results/vpn_eval.json \
-      --baseline results/baseline_eval.json
+      --vpn      results/vpn_eval.json
 """
 
 import argparse
@@ -43,7 +42,6 @@ if __name__ == "__main__":
     parser.add_argument("--nym",      required=True)
     parser.add_argument("--tor",      required=True)
     parser.add_argument("--vpn",      required=True)
-    parser.add_argument("--baseline", required=True)
     parser.add_argument("--output",   default=None)
     args = parser.parse_args()
 
@@ -51,7 +49,6 @@ if __name__ == "__main__":
         "Nym":      args.nym,
         "Tor":      args.tor,
         "VPN":      args.vpn,
-        "Baseline": args.baseline,
     }
     plot_pr_curves(paths, args.output)
     plot_prauc_bar(paths, args.output)

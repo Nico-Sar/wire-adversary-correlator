@@ -1,0 +1,64 @@
+--- config/kde_params.py	2026-07-09 14:55:40.752907995 +0200
++++ /tmp/kde_params.py.proposed	2026-07-12 10:43:05.536797937 +0200
+@@ -48,20 +48,49 @@
+ # anything beyond duration (see preprocessing/kde.py), so this is a tightening
+ # of an existing truncation behavior, not new lossy behavior — flows longer
+ # than duration lose only their tail beyond it, same as before.
++#
++# PROPOSED SECOND-PASS RETUNE (2026-07-12, NOT YET APPLIED — see
++# patches/03_duration_retune.md for the full writeup). A live campaign audit
++# spot-checked 20 successful round_02 visits/mode (INGRESS pcap span only,
++# via capinfos) against these values:
++#   vpn:  min=0.04 median=0.18 mean=0.83 max=2.87 p95=2.80s  (duration=6.0s)
++#   tor:  min=6.57 median=12.31 mean=14.70 max=37.61 p95=37.22s (duration=24.0s,
++#         2/20 samples — 10% — exceeded the window and got truncated)
++#   nym5: min=13.30 median=15.09 mean=16.05 max=28.11 p95=20.20s (duration=30.0s,
++#         no truncation observed in this sample — leaving as-is)
++#   nym2: min=6.02 median=11.26 mean=10.62 max=12.23 p95=12.19s (duration=30.0s)
++# vpn and nym2 look over-provisioned (lots of pure-padding window budget);
++# tor is truncating a non-trivial tail. CAVEAT: this is a single n=20,
++# ingress-only spot sample from one round — much thinner than the n=300,
++# dual-stream study above. Before applying, re-run kde_shape_check.py on a
++# real dataset built with these candidate values and confirm nonzero_frac
++# does not regress (the whole point of shortening duration is fewer padding
++# windows -> nonzero_frac should go UP, not down; if it doesn't, the shorter
++# window may be cutting real signal instead of padding and these values need
++# reconsidering, not just applying).
+ KDE_PER_MODE = {
+     # tor: median span ~11s; sized to comfortably cover typical circuits (~2x
+     # median) while accepting truncation of the long tail (p95=86s, p99=298s)
+     # — covering the tail would recreate the same padding-dominated windows
+     # for the 80%+ of flows that complete in <24s. n_windows=15.
+-    "tor":      {"duration": 24.0,  "sigma": 0.25},
++    # PROPOSED: 24.0 -> 32.0 (loosen slightly to cut the observed 10%
++    # tail-truncation rate down; still far short of the true p95=85.69s tail,
++    # so this is a modest adjustment within the original design's already-
++    # accepted truncation tradeoff, not a reversal of it).
++    "tor":      {"duration": 32.0,  "sigma": 0.25},
+     # vpn: real visits are near-instantaneous (no relay latency) — egress
+     # (the longer of the two streams) has p99=3.15s, max=3.29s. 6s duration
+     # covers max with ~1.8x margin. n_windows=3.
+-    "vpn":      {"duration": 6.0,   "sigma": 0.125},
++    # PROPOSED: 6.0 -> 4.0 (still >20% margin over the n=300 study's egress
++    # max=3.29s, which remains the authoritative bound since it's dual-stream
++    # and 15x the sample size of the new ingress-only spot check).
++    "vpn":      {"duration": 4.0,   "sigma": 0.125},
+     # nym5: sized to ingress p95=21.45s (the larger of ingress/egress) with a
+     # buffer, landing at 30s — same window count as nym2 coincidentally.
+     # Accepts truncation of the rare >30s outlier (max=140s) for the same
+     # reason as tor above. n_windows=19.
++    # UNCHANGED: the new spot-check sample (max=28.11s, no truncation) does
++    # not contradict this value.
+     "nym5":     {"duration": 30.0,  "sigma": 0.5},
+     # nym2 (2-hop WireGuard): confirmed on pilot (56/59 visits built, span p95=9.2s, max=9.8s).
+     # duration=30s: p95_span(9.2s)+10s buffer → 30s floor. n_windows=19 (same as vpn).
+@@ -69,5 +98,8 @@
+     # meaningless for kernel width. 0.2s smooths the burst envelope without collapsing structure.
+     # min_packets=5: nym2's upstream (client→mix) has very few packets per visit; the global 50
+     # would drop essentially all nym2 flows. Keep permissive here; yield gate catches real loss.
+-    "nym2":     {"duration": 30.0,  "sigma": 0.2, "min_packets": 5},
++    # PROPOSED: 30.0 -> 16.0 (real-campaign max=12.23s vs. the pilot's
++    # max=9.8s this was originally sized against — the two roughly agree;
++    # 16.0 keeps a ~30% margin over the larger of the two observed maxima).
++    "nym2":     {"duration": 16.0,  "sigma": 0.2, "min_packets": 5},
+ }

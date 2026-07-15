@@ -8,7 +8,6 @@
 #   bash scripts/preprocess_pilot.sh
 #
 # Output:
-#   data/pilot/baseline_dataset.npz
 #   data/pilot/tor_dataset.npz
 #   data/pilot/vpn_dataset.npz
  
@@ -17,7 +16,7 @@ set -euo pipefail
 OUTPUT="data/pilot"
 FAILED=()
  
-for mode in baseline tor vpn; do
+for mode in tor vpn; do
     labels="$OUTPUT/${mode}_visits.jsonl"
     data_dir="$OUTPUT/$mode"
     out_npz="$OUTPUT/${mode}_dataset.npz"

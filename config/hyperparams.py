@@ -8,7 +8,6 @@ All values are ShYSh baseline defaults unless noted.
 
 
 VISIT_TIMEOUTS = {
-    "baseline": {"browser_ms": 30_000,  "curl_s": 60},
     "tor":      {"browser_ms": 120_000, "curl_s": 300},
     "vpn":      {"browser_ms": 60_000,  "curl_s": 120},
     "nym5":     {"browser_ms": 180_000, "curl_s": 600},
@@ -23,20 +22,24 @@ KDE = {
     "t_sample":    0.1,     # Sampling period (seconds) → 10 samples/sec
     "window_len":  30,      # Window length in samples (= 3 seconds)
     "overlap":     0.5,     # Fractional overlap between windows
-    "min_packets": 5,       # Discard flows with fewer packets than this
+    "min_packets": 50,      # Discard flows with fewer per-stream packets than this
+                            # (raised from 5: tor .zip junk flows had <50 total ingress;
+                            # per-mode override in KDE_PER_MODE for nym2 which has
+                            # legitimately thin upstream traffic)
 }
 
 # Per-mode KDE overrides — duration and sigma vary with anonymity system latency
 KDE_PER_MODE = {
-    "baseline": {"duration": 30.0,  "sigma": 0.125},
     "tor":      {"duration": 60.0,  "sigma": 0.25},
     "vpn":      {"duration": 30.0,  "sigma": 0.125},
     "nym5":     {"duration": 60.0,  "sigma": 0.5},
     # nym2 (2-hop WireGuard): confirmed on pilot (56/59 visits built, span p95=9.2s, max=9.8s).
-    # duration=30s: p95_span(9.2s)+10s buffer → 30s floor. n_windows=19 (same as baseline/vpn).
+    # duration=30s: p95_span(9.2s)+10s buffer → 30s floor. n_windows=19 (same as vpn).
     # sigma=0.2: WireGuard UDP is high-density (~16k pkts/6s); inter-packet gap (~0.001s) is
     # meaningless for kernel width. 0.2s smooths the burst envelope without collapsing structure.
-    "nym2":     {"duration": 30.0,  "sigma": 0.2},
+    # min_packets=5: nym2's upstream (client→mix) has very few packets per visit; the global 50
+    # would drop essentially all nym2 flows. Keep permissive here; yield gate catches real loss.
+    "nym2":     {"duration": 30.0,  "sigma": 0.2, "min_packets": 5},
 }
 
 # ── Model ─────────────────────────────────────────────────────────────────────

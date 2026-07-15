@@ -8,7 +8,7 @@ and prints metadata as JSON to stdout.
 Deploy to ~/visit_trigger.py on each client VM.
 
 Usage (called by coordinator, not directly):
-  python3 visit_trigger.py --url example.com --visit_id abc123 [--proxy socks5://...] [--mode baseline]
+  python3 visit_trigger.py --url example.com --visit_id abc123 [--proxy socks5://...] [--mode vpn]
 """
 
 import argparse
@@ -24,7 +24,6 @@ from playwright.sync_api import sync_playwright
 BINARY_EXTENSIONS = {'.pdf', '.zip', '.mp3', '.mp4', '.bin'}
 
 VISIT_TIMEOUTS = {
-    "baseline": {"browser_ms": 30_000,  "curl_s": 60},
     "tor":      {"browser_ms": 120_000, "curl_s": 300},
     "vpn":      {"browser_ms": 60_000,  "curl_s": 120},
     "nym5":     {"browser_ms": 180_000, "curl_s": 600},
@@ -33,12 +32,12 @@ VISIT_TIMEOUTS = {
 
 
 def visit_curl(url: str, visit_id: str, proxy: str | None,
-               mode: str = "baseline") -> dict:
+               mode: str = "vpn") -> dict:
     """
     Downloads a binary resource via curl.
     Used for PDF, ZIP, MP3, MP4 — avoids browser download dialogs.
     """
-    timeouts = VISIT_TIMEOUTS.get(mode, VISIT_TIMEOUTS["baseline"])
+    timeouts = VISIT_TIMEOUTS.get(mode, VISIT_TIMEOUTS["vpn"])
     full_url = f"http://{url}" if not url.startswith("http") else url
 
     cmd = [
@@ -67,12 +66,12 @@ def visit_curl(url: str, visit_id: str, proxy: str | None,
 
 
 def visit_browser(url: str, visit_id: str, proxy: str | None,
-                  mode: str = "baseline") -> dict:
+                  mode: str = "vpn") -> dict:
     """
     Launches a headless Firefox browser, navigates to the URL,
     waits for page load + settle time, then closes.
     """
-    timeouts = VISIT_TIMEOUTS.get(mode, VISIT_TIMEOUTS["baseline"])
+    timeouts = VISIT_TIMEOUTS.get(mode, VISIT_TIMEOUTS["vpn"])
     full_url = f"http://{url}" if not url.startswith("http") else url
 
     meta = {
@@ -121,7 +120,7 @@ def visit_browser(url: str, visit_id: str, proxy: str | None,
 
 
 def visit(url: str, visit_id: str, proxy: str | None,
-          mode: str = "baseline") -> dict:
+          mode: str = "vpn") -> dict:
     """Routes to curl or browser based on file extension."""
     ext = Path(url.split("?")[0]).suffix.lower()
     if ext in BINARY_EXTENSIONS:
@@ -135,8 +134,8 @@ if __name__ == "__main__":
     parser.add_argument("--url",      required=True)
     parser.add_argument("--visit_id", required=True)
     parser.add_argument("--proxy",    default=None)
-    parser.add_argument("--mode",     default="baseline",
-                        choices=["baseline", "tor", "vpn", "nym5", "nym2"])
+    parser.add_argument("--mode",     default="vpn",
+                        choices=["tor", "vpn", "nym5", "nym2"])
     args = parser.parse_args()
 
     result = visit(args.url, args.visit_id, args.proxy, args.mode)

@@ -21,12 +21,11 @@ from config.infrastructure import CLIENTS
 from preprocessing.pcap_parser import extract_packets
 from preprocessing.windower import carve_time_window
 
-MODES = ["baseline", "vpn", "tor", "nym5", "nym2"]
+MODES = ["vpn", "tor", "nym5", "nym2"]
 PILOT_DIR = Path("data/pilot")
 
 # Current hyperparams for reference
 CURRENT_PARAMS = {
-    "baseline": {"sigma": 0.125, "duration": 30.0},
     "vpn":      {"sigma": 0.125, "duration": 30.0},
     "tor":      {"sigma": 0.25,  "duration": 60.0},
     "nym5":     {"sigma": 0.5,   "duration": 120.0},

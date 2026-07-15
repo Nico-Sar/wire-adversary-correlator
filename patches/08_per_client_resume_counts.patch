@@ -1,0 +1,60 @@
+--- collector/coordinator.py
++++ /tmp/coordinator.py.proposed_task8
+@@ -1742,7 +1742,34 @@
+ 
+         # Build per-URL success counts from existing log so a restarted run
+         # skips visits that already completed without re-collecting them.
+-        completed_counts: dict[str, int] = {}  # url → successful visit count
++        #
++        # PROPOSED (2026-07-12, NOT YET APPLIED — see
++        # patches/08_per_client_resume_counts.md): completed_counts must be
++        # scoped to THIS client only. nym5_visits.jsonl/nym2_visits.jsonl are
++        # SHARED across both clients of a mode (both append to the same
++        # log_path), but the quota (VISITS_LIGHT=48, see
++        # docs/CAMPAIGN_RUNBOOK.md) is defined per-client, independently —
++        # confirmed: 265 URLs x 48 visits/client/URL x 2 clients = 25,440
++        # flows/mode, the documented target. Before this fix, completed_counts
++        # pooled BOTH clients' successes per URL — harmless while both
++        # processes run continuously from early in the round (each client's
++        # own resume-skip loop only reads this once at its own process start,
++        # so it doesn't matter what the OTHER client adds afterward), but a
++        # fresh restart after one client has already finished and the other
++        # is still mid-quota sees the pooled count already >= 48 for nearly
++        # every URL and false-skips everything, instantly believing it's
++        # done. Confirmed live (2026-07-12, round_03): nym5-client1 had done
++        # 47-48/URL (genuinely done), nym5-client2 only 15-21/URL of its OWN
++        # visits (genuinely not done) — but the pooled combined count (62-67)
++        # was already past 48, so both clients skipped every visit on
++        # restart. The vid.startswith() check below is the only change: only
++        # count a success toward THIS client's completed_counts if the
++        # visit_id it's logged under actually belongs to this client_id
++        # (visit_ids are always f"{client_id}_v{serial}" or
++        # f"{client_id}_bf{serial}" — see VisitRecord construction — so this
++        # is an exact, unambiguous match, not a prefix-collision risk between
++        # client_ids in CLIENTS).
++        completed_counts: dict[str, int] = {}  # url → THIS client's successful visit count
+         serial = 0
+         if log_path.exists():
+             with log_path.open() as f:
+@@ -1757,7 +1784,8 @@
+                             serial = max(serial, int(vid.split("_v")[-1]))
+                         elif "_bf" in vid:
+                             serial = max(serial, int(vid.split("_bf")[-1]))
+-                        if rec.get("visit_status") == "success":
++                        if (rec.get("visit_status") == "success"
++                                and vid.startswith(f"{client_id}_")):
+                             url_key = rec.get("url", "")
+                             if url_key:
+                                 completed_counts[url_key] = completed_counts.get(url_key, 0) + 1
+@@ -1765,8 +1793,9 @@
+                         continue
+             n_done = sum(completed_counts.values())
+             if n_done:
+-                print(f"[coordinator] resuming: {n_done}/{total} visits already collected "
+-                      f"(max serial={serial})")
++                print(f"[coordinator] resuming: {n_done}/{total} of THIS client's visits "
++                      f"already collected (max serial={serial}, serial is shared "
++                      f"across both clients of this mode)")
+ 
+         done_total  = sum(completed_counts.values())
+         visit_count = 0  # new visits dispatched in this run

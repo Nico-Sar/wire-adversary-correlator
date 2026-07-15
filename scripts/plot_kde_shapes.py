@@ -4,7 +4,7 @@ scripts/plot_kde_shapes.py
 Generates a KDE shape comparison figure from pilot .npz datasets.
 
 Shows ingress_down and egress_down KDE density waves for the same URL
-visited via Baseline, Tor, VPN, Nym-5hop, and Nym-2hop — illustrating how
+visited via Tor, VPN, Nym-5hop, and Nym-2hop — illustrating how
 each anonymity system distorts the traffic shape at the wire level.
 
 Rows:
@@ -13,7 +13,6 @@ Rows:
 
 Usage (from repo root):
     python3 scripts/plot_kde_shapes.py \
-        --baseline  data/pilot/baseline_dataset.npz \
         --tor       data/pilot/tor_dataset.npz \
         --vpn       data/pilot/vpn_dataset.npz \
         --nym5      data/pilot/nym5_dataset.npz \
@@ -42,7 +41,6 @@ KUL_LBLUE = "#DCE7F0"
 KUL_ORANGE= "#F26B43"
 
 MODE_COLORS = {
-    "Baseline": KUL_NAVY,
     "Tor":      KUL_TEAL,
     "VPN":      KUL_ORANGE,
     "Nym-5hop": "#6C3D91",
@@ -56,7 +54,7 @@ from config.hyperparams import KDE, KDE_PER_MODE as _KDE_PER_MODE
 # Build plot params from canonical config so this script never goes stale.
 KDE_PER_MODE = {
     mode: {**_KDE_PER_MODE.get(mode, {}), "t_sample": KDE["t_sample"]}
-    for mode in ("baseline", "tor", "vpn", "nym5", "nym2")
+    for mode in ("tor", "vpn", "nym5", "nym2")
 }
 
 
@@ -76,7 +74,7 @@ def load_first_visit(npz_path: str, url_filter: str | None = None):
         pairs = data["pairs"]           # (N, 3) — [ing_idx, eg_idx, label]
     else:
         urls  = list(data["urls"])
-        mode  = "baseline"
+        mode  = "vpn"
         pairs = np.array([[i, i, 1] for i in range(len(urls))], dtype=np.int32)
 
     unique_urls = sorted(set(urls))
@@ -116,7 +114,7 @@ def make_time_axis(signal_len: int, t_sample: float = 0.1) -> np.ndarray:
 
 def plot_comparison(datasets: dict, url_filter: str | None, output: str):
     """
-    datasets : {"Baseline": npz_path, "Tor": npz_path, ...}
+    datasets : {"Tor": npz_path, "VPN": npz_path, ...}
     """
     n_modes = len(datasets)
 
@@ -223,7 +221,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Plot KDE shape comparison from pilot .npz datasets"
     )
-    parser.add_argument("--baseline", required=True)
     parser.add_argument("--tor",      required=True)
     parser.add_argument("--vpn",      required=True)
     parser.add_argument("--nym5",     default=None,
@@ -236,7 +233,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     datasets = {
-        "Baseline": args.baseline,
         "Tor":      args.tor,
         "VPN":      args.vpn,
     }

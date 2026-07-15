@@ -5,11 +5,11 @@
 # the web server VM, so each collection mode gets an isolated egress BPF port.
 #
 # Port assignment:
-#   80   — baseline (default, already live)
+#   80   — nym2 (default, already live)
 #   8080 — vpn
 #   8081 — tor
 #   8082 — nym5
-#   8083 — nym2
+#   8083 — unused (provisioned for future use)
 #
 # The script is idempotent: re-running it is safe.
 #
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-SSH_KEY="$HOME/.ssh/nico-thesis"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/nico-thesis}"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $SSH_KEY"
 TARGET="root@204.168.163.45"
 PRIVATE_IP="10.1.0.3"

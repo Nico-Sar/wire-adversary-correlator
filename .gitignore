@@ -29,3 +29,4 @@ build/
 
 # .testdata is intentionally NOT ignored — committed sample for smoke tests
 *.egg-info/
+.claude/

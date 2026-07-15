@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/preprocess_all.sh
-# Runs dataset_builder.py for all four modes.
+# Runs dataset_builder.py for all modes.
 set -euo pipefail
 
 INGRESS_DIR=${INGRESS_DIR:-"./data/raw/ingress"}
@@ -8,7 +8,7 @@ EGRESS_DIR=${EGRESS_DIR:-"./data/raw/egress"}
 LABELS_DIR=${LABELS_DIR:-"./logs"}
 OUTPUT_DIR=${OUTPUT_DIR:-"./data"}
 
-for mode in nym tor vpn baseline; do
+for mode in nym5 nym2 tor vpn; do
     labels="${LABELS_DIR}/labels_${mode}.jsonl"
     if [ -f "$labels" ]; then
         echo "[*] Processing $mode..."

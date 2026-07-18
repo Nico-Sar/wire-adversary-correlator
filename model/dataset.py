@@ -97,15 +97,22 @@ class QuartetDataset(Dataset):
  
     Args:
         npz_path:      path to .npz produced by dataset_builder.py (or a test fixture)
-        neg_pos_ratio: number of negative pairs per positive (default 10)
-        hard_neg_frac: fraction of negatives drawn from same URL (default 0.5)
+        neg_pos_ratio: number of negative pairs per positive (default 10). Pass
+                       None for full cross-product negatives instead of sampling —
+                       every (ingress, egress) pair within the split, labeled 1
+                       only for genuine same-visit pairs. This is what test-time
+                       evaluation needs: it reproduces the real ~1/U base rate
+                       (U = flows in the split) instead of training's fixed 10:1
+                       ratio, which matters because PR-AUC is base-rate-sensitive.
+        hard_neg_frac: fraction of negatives drawn from same URL (default 0.5).
+                       Ignored when neg_pos_ratio is None.
         split:         'train', 'val', or 'test'
         seed:          random seed for reproducibility
     """
- 
+
     def __init__(self,
                  npz_path:      str,
-                 neg_pos_ratio: int   = 10,
+                 neg_pos_ratio: int | None = 10,
                  hard_neg_frac: float = 0.5,
                  split:         str   = "train",
                  seed:          int   = 42):
@@ -169,47 +176,61 @@ class QuartetDataset(Dataset):
         url_to_eg: dict[str, list[int]] = {}
         for ing, eg in split_pos:
             url_to_eg.setdefault(flow_urls[ing], []).append(eg)
- 
+
         all_split_eg = [eg for _, eg in split_pos]   # all egress idx in split
- 
-        # ── Generate all (ingress_idx, egress_idx, label) pairs ────────────
-        n_hard = int(neg_pos_ratio * hard_neg_frac)
-        n_soft = neg_pos_ratio - n_hard   # total negatives = neg_pos_ratio exactly
- 
+
         rng = np.random.default_rng(seed)
         self._pairs: list[tuple[int, int, int]] = []
- 
-        for ing_idx, eg_idx in split_pos:
-            # Positive pair
-            self._pairs.append((ing_idx, eg_idx, 1))
- 
-            url = flow_urls[ing_idx]
- 
-            # Hard negatives: same URL, different egress
-            same_url_eg   = [e for e in url_to_eg.get(url, []) if e != eg_idx]
-            n_hard_actual = min(n_hard, len(same_url_eg))
-            if n_hard_actual > 0:
-                sampled = rng.choice(
-                    same_url_eg,
-                    size=n_hard_actual,
-                    replace=len(same_url_eg) < n_hard_actual,
-                )
-                for e in sampled:
-                    self._pairs.append((ing_idx, int(e), 0))
- 
-            # Soft negatives: any egress in split except the paired one.
-            # Also absorbs any shortfall from hard negatives (e.g. single-flow URLs).
-            n_soft_needed = n_soft + (n_hard - n_hard_actual)
-            if n_soft_needed > 0:
-                other_eg = [e for e in all_split_eg if e != eg_idx]
-                if other_eg:
+
+        if neg_pos_ratio is None:
+            # Full cross-product: every ingress in the split paired with every
+            # egress in the split. Label 1 only for genuine same-visit pairs —
+            # everything else is a negative. Base rate = U_pos / U_ing*U_eg,
+            # i.e. ~1/U_eg, matching the real deployment prior instead of a
+            # fixed sampling ratio.
+            positive_set = {(ing, eg) for ing, eg in split_pos}
+            ing_indices  = sorted({ing for ing, _ in split_pos})
+            eg_indices   = sorted({eg for _, eg in split_pos})
+            for ing_idx in ing_indices:
+                for eg_idx in eg_indices:
+                    label = 1 if (ing_idx, eg_idx) in positive_set else 0
+                    self._pairs.append((ing_idx, eg_idx, label))
+        else:
+            # ── Generate all (ingress_idx, egress_idx, label) pairs ────────
+            n_hard = int(neg_pos_ratio * hard_neg_frac)
+            n_soft = neg_pos_ratio - n_hard   # total negatives = neg_pos_ratio exactly
+
+            for ing_idx, eg_idx in split_pos:
+                # Positive pair
+                self._pairs.append((ing_idx, eg_idx, 1))
+
+                url = flow_urls[ing_idx]
+
+                # Hard negatives: same URL, different egress
+                same_url_eg   = [e for e in url_to_eg.get(url, []) if e != eg_idx]
+                n_hard_actual = min(n_hard, len(same_url_eg))
+                if n_hard_actual > 0:
                     sampled = rng.choice(
-                        other_eg,
-                        size=n_soft_needed,
-                        replace=len(other_eg) < n_soft_needed,
+                        same_url_eg,
+                        size=n_hard_actual,
+                        replace=len(same_url_eg) < n_hard_actual,
                     )
                     for e in sampled:
                         self._pairs.append((ing_idx, int(e), 0))
+
+                # Soft negatives: any egress in split except the paired one.
+                # Also absorbs any shortfall from hard negatives (e.g. single-flow URLs).
+                n_soft_needed = n_soft + (n_hard - n_hard_actual)
+                if n_soft_needed > 0:
+                    other_eg = [e for e in all_split_eg if e != eg_idx]
+                    if other_eg:
+                        sampled = rng.choice(
+                            other_eg,
+                            size=n_soft_needed,
+                            replace=len(other_eg) < n_soft_needed,
+                        )
+                        for e in sampled:
+                            self._pairs.append((ing_idx, int(e), 0))
 
         # Ingress URL for each pair — used by train.py for URL-limited subsets.
         self.pair_urls: list[str] = [flow_urls[ing] for ing, _, _ in self._pairs]

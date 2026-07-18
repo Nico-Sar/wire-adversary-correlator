@@ -54,7 +54,7 @@ echo "--- 0. Launch sanity (tracebacks / module errors / process failures) ---"
 # transitional round, where the new nym5-only and fast-mode instances both
 # briefly wrote into the same existing directory; every round after that
 # lives in a separate campaign_root per instance and has exactly one.
-FULL_URLS_VAL="NONE"; TOR_URLS_VAL="NONE"; LIGHT_URLS_VAL="NONE"; FAILED_LIST=""
+FULL_URLS_VAL="NONE"; TOR_URLS_VAL="NONE"; LIGHT_URLS_VAL="NONE"; FAILED_LIST=""; LAUNCHED_LIST=""
 found_meta=0
 for META_FILE in "$STAGE_DIR"/stage_meta*.txt; do
     [[ -f "$META_FILE" ]] || continue
@@ -67,6 +67,8 @@ for META_FILE in "$STAGE_DIR"/stage_meta*.txt; do
     [[ -n "$f" && "$f" != "NONE" ]] && FULL_URLS_VAL="$f"
     [[ -n "$t" && "$t" != "NONE" ]] && TOR_URLS_VAL="$t"
     [[ -n "$l" && "$l" != "NONE" ]] && LIGHT_URLS_VAL="$l"
+    lc=$(grep '^launched=' "$META_FILE" | cut -d= -f2-)
+    [[ -n "$lc" ]] && LAUNCHED_LIST="${LAUNCHED_LIST:+$LAUNCHED_LIST }$lc"
     fl=$(grep '^failed=' "$META_FILE" | cut -d= -f2-)
     if [[ -n "$fl" && "$fl" != "none" ]]; then
         FAILED_LIST="${FAILED_LIST:+$FAILED_LIST }$fl"
@@ -117,9 +119,26 @@ done
 
 mode_expected() {
     case "$1" in
-        vpn)       [[ "$FULL_URLS_VAL" != "NONE" && -n "$FULL_URLS_VAL" ]] ;;
-        tor)       [[ "$TOR_URLS_VAL"  != "NONE" && -n "$TOR_URLS_VAL"  ]] ;;
-        nym5|nym2) [[ "$LIGHT_URLS_VAL" != "NONE" && -n "$LIGHT_URLS_VAL" ]] ;;
+        vpn)  [[ "$FULL_URLS_VAL" != "NONE" && -n "$FULL_URLS_VAL" ]] ;;
+        tor)  [[ "$TOR_URLS_VAL"  != "NONE" && -n "$TOR_URLS_VAL"  ]] ;;
+        nym5|nym2)
+            [[ "$LIGHT_URLS_VAL" != "NONE" && -n "$LIGHT_URLS_VAL" ]] || return 1
+            # BUG FIXED (2026-07-15): nym5 and nym2 share the same light URL
+            # grid but are mutually exclusive per instance (MODE_SCOPE=nym5
+            # launches only nym5-client*, MODE_SCOPE=fast launches only
+            # nym2-client* — see run_stage.sh). Checking LIGHT_URLS_VAL alone
+            # can't tell them apart, so a nym5-only instance always got a
+            # false-positive "nym2: no visit log found" flag (and vice
+            # versa) — confirmed live on both data/campaign_fast/round_06
+            # and data/campaign_nym5/round_04 the same night this was fixed.
+            # LAUNCHED_LIST (from stage_meta*.txt's `launched=` line) records
+            # which actual client_ids ran, which does disambiguate. Fall
+            # back to the old (imprecise but safe) behavior if no
+            # LAUNCHED_LIST is available at all (pre-instance-separation
+            # stage_meta.txt files never had a `launched=` line).
+            [[ -z "$LAUNCHED_LIST" ]] && return 0
+            [[ "$LAUNCHED_LIST" == *"${1}-client"* ]]
+            ;;
         *) return 1 ;;
     esac
 }
@@ -277,17 +296,32 @@ fi
 # ── 6. Budget tracker ────────────────────────────────────────────────────────────
 echo ""
 echo "--- 6. Budget tracker ---"
-python3 -c "
+# BUG FIXED (2026-07-16): this block used to be `python3 -c "..."` with
+# $CAMPAIGN_ROOT/$STAGE_DIR/etc string-interpolated directly into a
+# DOUBLE-quoted bash argument. The "RATE_WINDOW_H bounds the lookback to
+# "how has it been doing lately"" comment a few lines down contains literal
+# "-characters, which prematurely closed that bash string right in the
+# middle of the for-loop body -- BEFORE any print() statement. Bash still
+# parsed the (silently truncated) result as a valid command, so this ran
+# with exit 0 and zero output on every single invocation, for the entire
+# campaign so far: the on-track/tight/over-budget projection has never
+# actually executed. Confirmed by extracting the exact block and running it
+# standalone (reproduced: RC=0, no stdout, no stderr). Switched to the same
+# argv+single-quoted-heredoc pattern already used in section 0's traceback
+# scan (<<'PYEOF', values passed as sys.argv) -- this makes the block
+# immune to quote characters appearing anywhere in its own source,
+# comments included.
+python3 - "$CAMPAIGN_ROOT" "$STAGE_DIR" "$LICENSE_DEADLINE" "$TARGET_FLOWS_PER_MODE" <<'PYEOF'
 import json, glob, os, sys
-from datetime import datetime, date
+from datetime import date
 
-campaign_root = '$CAMPAIGN_ROOT'
-stage_dir = '$STAGE_DIR'
-deadline = date.fromisoformat('$LICENSE_DEADLINE')
+campaign_root = sys.argv[1]
+stage_dir = sys.argv[2]
+deadline = date.fromisoformat(sys.argv[3])
+target = int(sys.argv[4])
 today = date.today()
 days_remaining = (deadline - today).days
 
-target = $TARGET_FLOWS_PER_MODE
 status_overall = 'ON TRACK'
 
 for mode in ('vpn', 'tor', 'nym5', 'nym2'):
@@ -382,7 +416,7 @@ for mode in ('vpn', 'tor', 'nym5', 'nym2'):
 print()
 print(f'OVERALL: {status_overall}')
 sys.exit(1 if 'OVER BUDGET' in status_overall else 0)
-"
+PYEOF
 budget_rc=$?
 [[ "$budget_rc" -ne 0 ]] && flag "budget tracker reports OVER BUDGET — see above"
 

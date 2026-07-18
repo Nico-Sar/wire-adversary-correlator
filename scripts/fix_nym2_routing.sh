@@ -11,8 +11,12 @@
 # the route deletion at every boot (After=network.target).
 #
 # Targets:
-#   nym2-client1  204.168.181.115  (private IP 10.0.0.4)
-#   nym2-client2  95.216.218.124   (private IP 10.0.0.6)
+#   nym2-client1  95.216.218.124   (private IP 10.0.0.4)
+#   nym2-client2  178.104.184.192  (private IP 10.0.0.6)
+#   (IPs corrected 2026-07-12 -- the previous ones were stale; both public
+#   IPs changed at some point and only config/infrastructure.py, the file
+#   the live coordinator actually reads, had been updated to match. Private
+#   IPs are unchanged and confirm these are the same underlying VMs.)
 #
 # Usage (from repo root):
 #   bash scripts/fix_nym2_routing.sh
@@ -23,8 +27,8 @@ SSH_KEY="$HOME/.ssh/nico-thesis"
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $SSH_KEY"
 
 NYM2_VMS=(
-    "root@204.168.181.115:nym2-client1"
-    "root@95.216.218.124:nym2-client2"
+    "root@95.216.218.124:nym2-client1"
+    "root@178.104.184.192:nym2-client2"
 )
 
 SERVICE_NAME="nym2-routing-fix"

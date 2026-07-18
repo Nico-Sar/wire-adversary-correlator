@@ -93,7 +93,16 @@ esac
 log "Full-list (vpn) stages: $n_full. Tor (full-minus-zip) stages: $n_tor. Light (nym5/nym2) stages: $n_light. Total rounds: $n_rounds (MODE_SCOPE=$MODE_SCOPE)"
 log "(full/tor share stage index; missing tor/stage_NN → tor=NONE that round. light is independent.)"
 
-for round in $(seq -w 1 "$n_rounds"); do
+for round_raw in $(seq 1 "$n_rounds"); do
+    # Always 2-digit, regardless of $n_rounds' own digit count — `seq -w`
+    # only pads to the width of the sequence's own max value, so for a
+    # single-digit n_rounds (e.g. a nym5-only instance with 7 total light
+    # stages) it produced "1".."7" instead of "01".."07", which then failed
+    # every stage_${round}.txt lookup below since _stage_slices.py always
+    # names files with a fixed 2-digit width. Confirmed live (2026-07-15):
+    # this silently zeroed out an entire MODE_SCOPE=nym5 launch — every
+    # round looked "exhausted" even though the light grid was fully intact.
+    round=$(printf "%02d" "$round_raw")
     if (( 10#$round < START_ROUND )); then
         log "Skipping round $round (before start_round=$START_ROUND)"
         continue

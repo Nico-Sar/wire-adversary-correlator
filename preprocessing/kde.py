@@ -13,7 +13,7 @@ Reference: ShYSh paper, Section III-A "Flow Shape Signal Computation"
 
 import numpy as np
 
-from config.hyperparams import KDE
+from config.kde_params import KDE
 
 
 def normalize_timestamps(packets: list[dict]) -> list[dict]:

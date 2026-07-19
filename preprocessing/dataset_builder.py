@@ -36,6 +36,8 @@ Usage:
 import argparse
 import json
 import logging
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -51,6 +53,89 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+
+def _process_one_visit(rec: dict, data_dir_str: str, mode: str,
+                        mode_kde: dict, kde_kwargs: dict) -> dict:
+    """
+    Worker for one visit -- pure function of its inputs (own pcap pair,
+    own record), so it's safe to run in a separate process. Returns a dict
+    tagged with status "ok" (quartet + metadata) or "skip" (reason string)
+    instead of raising/logging directly, since logging from a child process
+    doesn't reach the parent's handlers -- the parent logs skip reasons
+    itself once results come back.
+    """
+    data_dir = Path(data_dir_str)
+    visit_id = rec["visit_id"]
+    url      = rec["url"]
+    for _sep in ("_bf", "_v"):
+        if _sep in visit_id:
+            client_id = visit_id.split(_sep)[0]
+            break
+    else:
+        client_id = visit_id
+
+    ingress_pcap = data_dir / f"{visit_id}_ingress.pcap"
+    egress_pcap  = data_dir / f"{visit_id}_egress.pcap"
+
+    if not ingress_pcap.exists() or not egress_pcap.exists():
+        return {"status": "skip", "visit_id": visit_id,
+                "reason": f"Missing pcap for {visit_id}"}
+
+    t_start = rec["t_visit_start"]
+    t_end   = rec["t_visit_end"]
+
+    try:
+        client_ip = get_client_private_ip(client_id)
+    except KeyError:
+        return {"status": "skip", "visit_id": visit_id,
+                "reason": f"Unknown client_id '{client_id}'"}
+
+    try:
+        quartet = compute_quartet(
+            ingress_pcap=str(ingress_pcap),
+            egress_pcap=str(egress_pcap),
+            t_start=t_start,
+            t_end=t_end,
+            client_private_ip=client_ip,
+            mode=mode,
+            **kde_kwargs,
+        )
+    except Exception as e:
+        return {"status": "skip", "visit_id": visit_id,
+                "reason": f"Quartet failed for {visit_id}: {e}"}
+
+    min_pkts_per_stream = mode_kde.get("min_packets", KDE["min_packets"])
+    stream_counts = {
+        "ingress_up":   quartet["n_ingress_up"],
+        "ingress_down": quartet["n_ingress_down"],
+        "egress_up":    quartet["n_egress_up"],
+        "egress_down":  quartet["n_egress_down"],
+    }
+    checked_streams = (
+        ("egress_up", "egress_down")
+        if mode in EGRESS_ONLY_MODES
+        else ("ingress_up", "ingress_down", "egress_up", "egress_down")
+    )
+    low_streams = [k for k in checked_streams if stream_counts[k] < min_pkts_per_stream]
+    if low_streams:
+        return {"status": "skip", "visit_id": visit_id,
+                "reason": f"Low per-stream packet count {low_streams} for {visit_id}"}
+
+    zero_streams = [k for k in checked_streams if quartet[k].shape[0] == 0]
+    if zero_streams:
+        return {"status": "skip", "visit_id": visit_id,
+                "reason": f"Zero windows in {zero_streams} for {visit_id}"}
+
+    return {
+        "status": "ok",
+        "visit_id": visit_id,
+        "url": url,
+        "ingress_up": quartet["ingress_up"],
+        "ingress_down": quartet["ingress_down"],
+        "egress_up": quartet["egress_up"],
+        "egress_down": quartet["egress_down"],
+    }
 
 
 def build_dataset(labels_jsonl: str,
@@ -113,7 +198,30 @@ def build_dataset(labels_jsonl: str,
     mode_kde = {**KDE_PER_MODE.get(mode, KDE), **kde_kwargs}
     log.info(f"Mode: {mode}  KDE params: {mode_kde}")
 
-    # ── 4. Compute Quartet for each visit ─────────────────────────────────
+    # ── 4. Compute Quartet for each visit (parallel — each visit only reads
+    #    its own two pcaps and is otherwise independent, see _process_one_visit) ──
+    n_workers = min(int(os.environ.get("DATASET_BUILDER_WORKERS", os.cpu_count() or 4)),
+                     len(records))
+    log.info(f"Processing {len(records)} visits with {n_workers} parallel workers")
+
+    results_by_index = [None] * len(records)
+    with ProcessPoolExecutor(max_workers=n_workers) as ex:
+        futs = {
+            ex.submit(_process_one_visit, rec, str(data_dir), mode, mode_kde, kde_kwargs): i
+            for i, rec in enumerate(records)
+        }
+        done = 0
+        for fut in as_completed(futs):
+            i = futs[fut]
+            results_by_index[i] = fut.result()
+            done += 1
+            if done % 500 == 0:
+                log.info(f"  Processed {done}/{len(records)} visits")
+
+    # Rebuild lists in original record order (order only affects which raw
+    # index a visit lands at pre-shuffle below — shuffling then re-derives
+    # a random assignment anyway, so this is purely for stable/debuggable
+    # output, not a correctness requirement).
     ingress_up_list   = []
     ingress_down_list = []
     egress_up_list    = []
@@ -123,101 +231,20 @@ def build_dataset(labels_jsonl: str,
     modes_list        = []
     skipped           = 0
 
-    for i, rec in enumerate(records):
-        visit_id  = rec["visit_id"]
-        url       = rec["url"]
-        # Handle both _vNNNNN (primary) and _bfNNNNN (backfill) visit ID formats
-        for _sep in ("_bf", "_v"):
-            if _sep in visit_id:
-                client_id = visit_id.split(_sep)[0]
-                break
-        else:
-            client_id = visit_id
-
-        ingress_pcap = data_dir / f"{visit_id}_ingress.pcap"
-        egress_pcap  = data_dir / f"{visit_id}_egress.pcap"
-
-        if not ingress_pcap.exists() or not egress_pcap.exists():
-            log.warning(f"  [{i+1}/{len(records)}] Missing pcap for {visit_id} — skipping")
+    for r in results_by_index:
+        if r["status"] == "skip":
+            log.warning(f"  {r['reason']} — skipping")
             skipped += 1
             continue
-
-        # Use visit window with buffer (already applied in quartet_builder)
-        t_start = rec["t_visit_start"]
-        t_end   = rec["t_visit_end"]
-
-        try:
-            client_ip = get_client_private_ip(client_id)
-        except KeyError:
-            log.warning(f"  [{i+1}/{len(records)}] Unknown client_id '{client_id}' — skipping")
-            skipped += 1
-            continue
-
-
-        try:
-            quartet = compute_quartet(
-                ingress_pcap=str(ingress_pcap),
-                egress_pcap=str(egress_pcap),
-                t_start=t_start,
-                t_end=t_end,
-                client_private_ip=client_ip,
-                mode=mode,
-                **kde_kwargs,
-            )
-        except Exception as e:
-            log.warning(f"  [{i+1}/{len(records)}] Quartet failed for {visit_id}: {e} — skipping")
-            skipped += 1
-            continue
-
-        # Check minimum packet count per stream (not in total).
-        # A visit where one stream is empty produces all-zero windows for that
-        # stream, which misleads training with corrupted positive pairs.
-        # Exception: egress-only modes (e.g. nym5) have no ingress traffic by
-        # design — their ingress streams are always zero and must not be checked.
-        min_pkts_per_stream = mode_kde.get("min_packets", KDE["min_packets"])
-        stream_counts = {
-            "ingress_up":   quartet["n_ingress_up"],
-            "ingress_down": quartet["n_ingress_down"],
-            "egress_up":    quartet["n_egress_up"],
-            "egress_down":  quartet["n_egress_down"],
-        }
-        checked_streams = (
-            ("egress_up", "egress_down")
-            if mode in EGRESS_ONLY_MODES
-            else ("ingress_up", "ingress_down", "egress_up", "egress_down")
-        )
-        low_streams = [k for k in checked_streams if stream_counts[k] < min_pkts_per_stream]
-        if low_streams:
-            log.warning(
-                f"  [{i+1}/{len(records)}] Low per-stream packet count "
-                f"{low_streams} for {visit_id} — skipping"
-            )
-            skipped += 1
-            continue
-
-        # Guard: checked streams must have produced at least one window.
-        # slice_windows returns shape (0, L) if the KDE signal is shorter than
-        # window_len (3 s). A zero-window visit would be padded to all-zeros
-        # and labelled as a positive pair, corrupting training.
-        zero_streams = [k for k in checked_streams if quartet[k].shape[0] == 0]
-        if zero_streams:
-            log.warning(
-                f"  [{i+1}/{len(records)}] Zero windows in {zero_streams} "
-                f"for {visit_id} — skipping"
-            )
-            skipped += 1
-            continue
-
-        ingress_up_list.append(quartet["ingress_up"])
-        ingress_down_list.append(quartet["ingress_down"])
-        egress_up_list.append(quartet["egress_up"])
-        egress_down_list.append(quartet["egress_down"])
-        visit_ids_list.append(visit_id)
-        urls_list.append(url)
+        ingress_up_list.append(r["ingress_up"])
+        ingress_down_list.append(r["ingress_down"])
+        egress_up_list.append(r["egress_up"])
+        egress_down_list.append(r["egress_down"])
+        visit_ids_list.append(r["visit_id"])
+        urls_list.append(r["url"])
         modes_list.append(mode)
 
-        if (i + 1) % 50 == 0:
-            log.info(f"  Processed {i+1}/{len(records)} visits ({skipped} skipped)")
+    log.info(f"  Processed {len(records)}/{len(records)} visits ({skipped} skipped)")
 
     N = len(visit_ids_list)
     log.info(f"Successfully processed {N} visits ({skipped} skipped)")

@@ -49,7 +49,7 @@ MODE_COLORS = {
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config.hyperparams import KDE, KDE_PER_MODE as _KDE_PER_MODE
+from config.kde_params import KDE, KDE_PER_MODE as _KDE_PER_MODE
 
 # Build plot params from canonical config so this script never goes stale.
 KDE_PER_MODE = {

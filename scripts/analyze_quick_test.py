@@ -34,7 +34,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from config.hyperparams import KDE, KDE_PER_MODE
+from config.kde_params import KDE, KDE_PER_MODE
 from config.infrastructure import EGRESS_ONLY_MODES, get_client_private_ip
 from preprocessing.kde import kde_shape, split_directions
 from preprocessing.pcap_parser import extract_packets

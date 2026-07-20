@@ -7,7 +7,7 @@ ShYSh defaults: window_len=30 samples (3s), overlap=50%.
 
 import numpy as np
 
-from config.hyperparams import KDE
+from config.kde_params import KDE
 
 
 def slice_windows(signal:     np.ndarray,

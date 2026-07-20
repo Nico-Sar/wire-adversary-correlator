@@ -324,25 +324,44 @@ days_remaining = (deadline - today).days
 
 status_overall = 'ON TRACK'
 
+# BUG FIXED (2026-07-18): cumulative counts only globbed $CAMPAIGN_ROOT
+# (e.g. data/campaign_fast), completely blind to data/campaign -- the
+# original pre-split root that holds rounds 01-03, collected before
+# vpn/tor/nym2/nym5 were split into separate campaign_fast/campaign_nym5
+# instances. This silently undercounted every split instance's cumulative
+# by tens of thousands of flows (confirmed live: campaign_fast reported
+# tor cumulative=16224/25000 "OVER BUDGET" when the real total including
+# the pre-split root was 30611/25000 -- already well past target, a false
+# HALT). Both split roots trace lineage back to the same pre-split root,
+# so it's always included in addition to campaign_root itself (deduped by
+# absolute path so a non-split future run of plain data/campaign doesn't
+# double-count itself).
+PRE_SPLIT_ROOT = 'data/campaign'
+roots = [campaign_root]
+if os.path.isdir(PRE_SPLIT_ROOT) and os.path.abspath(PRE_SPLIT_ROOT) != os.path.abspath(campaign_root):
+    roots.append(PRE_SPLIT_ROOT)
+
 for mode in ('vpn', 'tor', 'nym5', 'nym2'):
-    # Cumulative primary successes across ALL stage dirs. Backfill visits are
-    # excluded from the target count (they are bonus data, not campaign budget).
+    # Cumulative primary successes across ALL stage dirs (this instance's
+    # root plus the pre-split root, see PRE_SPLIT_ROOT above). Backfill
+    # visits are excluded from the target count (bonus data, not budget).
     cumulative = 0
     backfill_cumulative = 0
-    for f in sorted(glob.glob(os.path.join(campaign_root, '*', f'{mode}_visits.jsonl'))):
-        with open(f) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line: continue
-                try:
-                    r = json.loads(line)
-                except Exception:
-                    continue
-                if r.get('visit_status') == 'success':
-                    if r.get('backfill', False):
-                        backfill_cumulative += 1
-                    else:
-                        cumulative += 1
+    for root in roots:
+        for f in sorted(glob.glob(os.path.join(root, '*', f'{mode}_visits.jsonl'))):
+            with open(f) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    if r.get('visit_status') == 'success':
+                        if r.get('backfill', False):
+                            backfill_cumulative += 1
+                        else:
+                            cumulative += 1
 
     # This stage's own primary rate: successes / RECENT wall-clock window
     # (backfill excluded). Deliberately NOT successes / (max-min) over the

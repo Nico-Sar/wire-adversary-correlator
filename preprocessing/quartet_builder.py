@@ -14,7 +14,7 @@ Each stream is a 2D array of shape (n_windows, window_len) after KDE + windowing
 
 import numpy as np
 
-from config.hyperparams import KDE_PER_MODE
+from config.kde_params import KDE_PER_MODE
 from config.infrastructure import EGRESS_ROUTER
 from preprocessing.kde import kde_shape, split_directions
 from preprocessing.pcap_parser import extract_packets
@@ -58,6 +58,16 @@ def compute_quartet(ingress_pcap:      str,
     # Merge mode defaults with any caller overrides
     effective_kde = {**KDE_PER_MODE[mode], **kde_kwargs}
 
+    # kde_shape() only accepts duration/sigma/t_sample. effective_kde can carry
+    # extra mode-specific keys not meant for it — e.g. nym2's min_packets,
+    # which exists purely for dataset_builder.py's own per-stream threshold
+    # gate (read directly from KDE_PER_MODE there, untouched by this filter).
+    # Forwarding effective_kde unfiltered raised TypeError on every nym2 call
+    # (min_packets is not a kde_shape() parameter), silently swallowed by
+    # dataset_builder's generic except as a false "quartet failed" skip —
+    # zero nym2 visits ever got built. Modes without extra keys are unaffected.
+    kde_only = {k: v for k, v in effective_kde.items() if k in ("duration", "sigma", "t_sample")}
+
     # ── 1. Parse both pcaps ────────────────────────────────────────────────
     ingress_pkts = extract_packets(ingress_pcap, local_ip=ingress_local_ip)
     egress_pkts  = extract_packets(egress_pcap,  local_ip=egress_local_ip)
@@ -74,10 +84,10 @@ def compute_quartet(ingress_pcap:      str,
     egress_up_ts,    egress_down_ts   = split_directions(egress_carved)
 
     # ── 4. KDE shape for each stream ──────────────────────────────────────
-    ingress_up_shape   = kde_shape(ingress_up_ts,   **effective_kde)
-    ingress_down_shape = kde_shape(ingress_down_ts, **effective_kde)
-    egress_up_shape    = kde_shape(egress_up_ts,    **effective_kde)
-    egress_down_shape  = kde_shape(egress_down_ts,  **effective_kde)
+    ingress_up_shape   = kde_shape(ingress_up_ts,   **kde_only)
+    ingress_down_shape = kde_shape(ingress_down_ts, **kde_only)
+    egress_up_shape    = kde_shape(egress_up_ts,    **kde_only)
+    egress_down_shape  = kde_shape(egress_down_ts,  **kde_only)
 
     # ── 5. Slice into overlapping windows ─────────────────────────────────
     ingress_up   = slice_windows(ingress_up_shape)

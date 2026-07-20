@@ -27,6 +27,7 @@ import subprocess
 import threading
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -77,6 +78,14 @@ from config.hyperparams import VISIT_TIMEOUTS
 CHANNEL_OPEN_TIMEOUT_S      = 20    # bounds opening any new channel on this connection
 DEFAULT_SSH_EXEC_TIMEOUT_S  = 30    # bounds short administrative commands via ssh_run()
 SCP_TIMEOUT_S               = 60    # bounds the pcap-pull data-transfer phase
+CONNECT_HANG_TIMEOUT_S      = 60    # external backstop on ssh_connect() itself -- see
+                                     # retry_ssh_connect()'s 2026-07-20 note: paramiko's own
+                                     # timeout/banner_timeout/auth_timeout do not reliably bound
+                                     # client.connect() when its background Transport thread dies
+                                     # mid-handshake, so this is enforced from outside via a
+                                     # worker future instead of trusted alone. 60s comfortably
+                                     # exceeds connect()'s own worst-case internal budget
+                                     # (timeout=15 + banner_timeout=20 + auth_timeout=20).
 
 
 def _agent_key_matching_pubfile(key_path: Path) -> "paramiko.AgentKey | None":
@@ -156,11 +165,32 @@ def retry_ssh_connect(host_cfg: dict, max_retries: int = 16, delay: int = 20) ->
     this way for several cycles. A single more-patient invocation riding
     out the blip is strictly better than repeated crash+relaunch cycles
     during the exact same outage window.
+
+    2026-07-20 (later same day): ssh_connect() itself is run through a
+    bounded executor rather than called directly. Confirmed live -- fleet-
+    wide, repeatedly, during a ~4h ingress-router outage -- that when
+    paramiko's background Transport thread dies mid-handshake (e.g.
+    "Error reading SSH protocol banner", printed by Python's default
+    threading.excepthook since it's an unhandled exception in a thread
+    paramiko itself spawned), client.connect() in the CALLING thread does
+    not reliably raise despite banner_timeout/auth_timeout/channel_timeout
+    all being set -- it just hangs forever. That hang happens inside this
+    try/except, so it was never a caught-and-retried exception at all: the
+    "attempt X/Y" retry message never printed, the whole coordinator
+    process just sat at 0% CPU indefinitely, and neither this function's
+    own retry budget nor any watchdog restart helped once relaunched into
+    the same still-ongoing outage. Wrapping the call with .result(timeout=)
+    converts that class of hang into an ordinary TimeoutError the existing
+    except/retry loop already handles -- the abandoned worker thread (and
+    paramiko's own stuck Transport thread inside it) leaks, but that's a
+    contained, bounded cost against an otherwise-indefinite full freeze.
     """
     last_exc = None
     for attempt in range(1, max_retries + 1):
         try:
-            return ssh_connect(host_cfg)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(ssh_connect, host_cfg)
+                return fut.result(timeout=CONNECT_HANG_TIMEOUT_S)
         except Exception as e:
             last_exc = e
             if attempt < max_retries:

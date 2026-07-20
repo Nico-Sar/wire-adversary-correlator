@@ -33,6 +33,19 @@ CAMPAIGN_ROOT="data/campaign_nym5"
 URLDIR="$CAMPAIGN_ROOT/_url_slices/light"
 STALE_S=600
 INTERVAL_S=120
+# 2026-07-20: staggers every launch() call by STAGGER_S. Root-caused a
+# fleet-wide freeze (all 6 clients stuck cycling hcloud resets, every one
+# failing "SOCKS5 port 1080 not listening" on the SAME visit number) to a
+# known Nym backend concurrency bug in ticketbook (bandwidth credential)
+# retrieval when multiple devices on the same account request one at the
+# same time -- see nymtech's own changelog ("Retrieve and update ticketbook
+# in the same query" fix entry). Every prior restart cycle relaunched all
+# 6 clients within the same ~1s window (confirmed live in this log: 6
+# consecutive "launched" lines with identical timestamps), which reconnects
+# all 6 devices on the shared account simultaneously every single time --
+# a self-inflicted thundering herd against exactly the bug described above.
+# Spacing launches out removes the simultaneity that triggers it.
+STAGGER_S=25
 # VISITS_LIGHT was originally decided as 48/client/URL for a 2-client nym5
 # fleet (see docs/CAMPAIGN_RUNBOOK.md "Light-list visits/URL decision" --
 # 48*2=96 visits/URL combined * 265 light URLs = 25,440 flows/mode, hitting
@@ -70,6 +83,7 @@ launch() {
         > "$rd/log_${client}.txt" 2>&1 < /dev/null &
     disown
     log "$client launched on stage_$(printf %02d "$stage") -> $rd"
+    sleep "$STAGGER_S"
 }
 
 log "started, tracking: $(for c in "${!STAGE[@]}"; do echo -n "$c@stage_$(printf %02d "${STAGE[$c]}") "; done)"

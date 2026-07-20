@@ -33,8 +33,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import paramiko
 from config.infrastructure import CLIENTS
+from collector.coordinator import _agent_key_matching_pubfile
 
-NYM_VMS = ["nym5-client1", "nym5-client2", "nym2-client1", "nym2-client2"]
+# CAUTION: step 4's verification stops+restarts nym-vpnd on every VM in
+# this list (~40s disruption each). If any of these are actively running a
+# live coordinator collection, scope this list down to just the VMs that
+# actually need (re)deployment before running -- confirmed live 2026-07-20
+# that client1/2 already had safe-start deployed from before this session
+# (see their own nym_safe_start.log history), so a targeted re-run only
+# needs to cover freshly-provisioned/converted clients.
+NYM_VMS = ["nym5-client1", "nym5-client2", "nym5-client3", "nym5-client4", "nym5-client5", "nym5-client6"]
 
 SAFE_START_SCRIPT = """\
 #!/bin/bash
@@ -75,9 +83,15 @@ DROPIN_PATH      = f"{DROPIN_DIR}/safe-start.conf"
 
 
 def _ssh_connect_with_retry(host_cfg: dict, max_wait: int = 90, interval: int = 10) -> paramiko.SSHClient:
-    """Retry SSH connect for up to max_wait seconds — handles safe-start hook window."""
+    """Retry SSH connect for up to max_wait seconds — handles safe-start hook window.
+
+    pkey pinned via _agent_key_matching_pubfile (see coordinator.py) --
+    avoids paramiko's blind agent-key enumeration crashing on leroy's
+    unrelated ED25519-CERT identity (AttributeError: public_blob).
+    """
     key_path = os.environ.get("SSH_KEY") or host_cfg["key_path"]
     key_filename = str(Path(key_path).expanduser())
+    pkey = _agent_key_matching_pubfile(Path(key_filename))
     deadline = time.time() + max_wait
     last_err = None
     while time.time() < deadline:
@@ -87,6 +101,7 @@ def _ssh_connect_with_retry(host_cfg: dict, max_wait: int = 90, interval: int = 
             client.connect(
                 hostname=host_cfg["host"],
                 username=host_cfg["user"],
+                pkey=pkey,
                 key_filename=key_filename,
                 timeout=8,
             )

@@ -15,7 +15,9 @@ Usage:
 """
 
 import argparse
+import base64
 import fcntl
+import hashlib
 import itertools
 import json
 import os
@@ -77,14 +79,59 @@ DEFAULT_SSH_EXEC_TIMEOUT_S  = 30    # bounds short administrative commands via s
 SCP_TIMEOUT_S               = 60    # bounds the pcap-pull data-transfer phase
 
 
+def _agent_key_matching_pubfile(key_path: Path) -> "paramiko.AgentKey | None":
+    """Finds the loaded ssh-agent identity matching key_path's public half,
+    without ever touching .public_blob on any OTHER identity in the agent.
+
+    2026-07-20: leroy's agent picked up a third-party ED25519-CERT identity
+    (comment "vaultssh-kmk", likely an unrelated Vault-issued cert) that
+    crashes paramiko's own key-type detection (AttributeError: public_blob,
+    from AgentKey.__getattr__) the moment paramiko's default auth fallback
+    enumerates agent identities — which it does whenever key_filename is
+    passphrase-protected and can't be decrypted directly. That enumeration
+    order isn't fixed, so this hit ~0% of the time earlier in the session
+    and 100% of the time later (confirmed live: 4/4 VMs, every retry,
+    identical traceback) once that cert entry was present. Explicitly
+    selecting our own key and passing it as pkey= means paramiko never
+    iterates the agent at all, so the cert entry (or any future unrelated
+    addition to the agent) can't affect us regardless of ordering.
+    Matched by fingerprint (md5 of the public blob, same as PKey's own
+    get_fingerprint()) rather than comment: confirmed live the agent's
+    comment for this key ("nicolas-thesis") doesn't match the on-disk
+    filename ("nico-thesis"), so name-substring matching would silently
+    fail to find it. .get_fingerprint() is confirmed safe to read on every
+    identity, including the cert one — only .public_blob crashes.
+    """
+    pub_path = key_path.with_suffix(key_path.suffix + ".pub") if key_path.suffix else Path(str(key_path) + ".pub")
+    try:
+        with open(pub_path) as f:
+            key_b64 = f.read().strip().split()[1]
+        target_fp = hashlib.md5(base64.b64decode(key_b64)).digest()
+    except Exception:
+        return None
+    try:
+        agent = paramiko.Agent()
+        for key in agent.get_keys():
+            try:
+                if key.get_fingerprint() == target_fp:
+                    return key
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def ssh_connect(host_cfg: dict) -> paramiko.SSHClient:
     """Opens and returns an authenticated SSHClient for a host config dict."""
     key_path = os.environ.get("SSH_KEY") or host_cfg["key_path"]
+    pkey = _agent_key_matching_pubfile(Path(key_path).expanduser())
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(
         hostname=host_cfg["host"],
         username=host_cfg["user"],
+        pkey=pkey,
         key_filename=str(Path(key_path).expanduser()),
         timeout=15,
         banner_timeout=20,
@@ -94,8 +141,22 @@ def ssh_connect(host_cfg: dict) -> paramiko.SSHClient:
     return client
 
 
-def retry_ssh_connect(host_cfg: dict, max_retries: int = 5, delay: int = 15) -> paramiko.SSHClient:
-    """ssh_connect with retry loop. Sleeps delay seconds between attempts."""
+def retry_ssh_connect(host_cfg: dict, max_retries: int = 16, delay: int = 20) -> paramiko.SSHClient:
+    """ssh_connect with retry loop. Sleeps delay seconds between attempts.
+
+    2026-07-20: raised from 5x15s (~75s+attempt time) to 16x20s (~5-6 min
+    total budget). Confirmed live: the whole nym5 fleet (6/6 hosts,
+    including nym5-client1's own host, independent of coordinator.py
+    entirely -- checked via plain ssh) can go simultaneously unreachable
+    for a multi-minute stretch as ordinary network-path flakiness, not a
+    per-VM fault. The old budget was shorter than these blips regularly
+    last, so a freshly-launched (or watchdog-relaunched) coordinator would
+    reliably crash mid-blip and need another relaunch that just hit the
+    same still-ongoing blip -- confirmed live, client4/5/6 crash-looped
+    this way for several cycles. A single more-patient invocation riding
+    out the blip is strictly better than repeated crash+relaunch cycles
+    during the exact same outage window.
+    """
     last_exc = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -232,8 +293,27 @@ def ssh_run(client: paramiko.SSHClient, cmd: str, check=True,
     means a hung VM blocks forever right there, completely ignoring the
     `timeout` passed to exec_command: confirmed live, on the wire, against a
     real powered-off VM, while validating this fix.
+
+    Channel-open itself gets a few short retries on paramiko.SSHException
+    ("Timeout opening channel.") — confirmed live (2026-07-20) that this can
+    happen as an ordinary transient blip on an otherwise-healthy, already-
+    authenticated connection (the initial retry_ssh_connect() already
+    tolerates the same kind of blip when first connecting; this closes the
+    same gap for every subsequent command on that connection, which
+    previously had no retry at all and crashed the whole coordinator run on
+    a single bad channel-open).
     """
-    _, stdout, stderr = client.exec_command(cmd, timeout=timeout)
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            _, stdout, stderr = client.exec_command(cmd, timeout=timeout)
+            break
+        except paramiko.SSHException as e:
+            last_exc = e
+            if attempt < 3:
+                time.sleep(3)
+    else:
+        raise last_exc
     out = stdout.read().decode().strip()
     err = stderr.read().decode().strip()
     if not stdout.channel.status_event.wait(timeout):
@@ -1156,9 +1236,17 @@ def check_client_health(client_ssh: paramiko.SSHClient, mode: str) -> tuple[bool
     try:
         if not (client_ssh.get_transport() and client_ssh.get_transport().is_active()):
             return False, "ssh transport not active"
-        _, stdout, _ = client_ssh.exec_command("echo ALIVE", timeout=10)
-        out = stdout.read().decode().strip()
-        stdout.channel.recv_exit_status()
+        # 2026-07-20: this used to be a raw exec_command()+recv_exit_status()
+        # call -- exactly the anti-pattern ssh_run()'s own docstring warns
+        # about (recv_exit_status() has no timeout, raw Event.wait(),
+        # and blocks forever if a channel's buffers -- stdout AND stderr --
+        # aren't fully drained first; this call only ever drained stdout).
+        # Confirmed live: this is what was silently hanging nym5-client3/4
+        # indefinitely right after "SSH back after hcloud reset" -- the one
+        # call in this function not routed through the already-hardened
+        # ssh_run() helper, with nothing above it (this IS the health check
+        # _poll_until_healthy relies on) to catch or time out the hang.
+        out = ssh_run(client_ssh, "echo ALIVE", check=False, timeout=10)
         if out != "ALIVE":
             return False, f"ssh command did not echo ALIVE (got {out!r})"
 

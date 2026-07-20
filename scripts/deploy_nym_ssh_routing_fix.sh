@@ -18,10 +18,29 @@ ROOT CAUSE ADDRESSED (diagnosed + fixed live, 2026-07-04):
   counter-productive. This script's rule is plain source-IP based instead,
   with no fwmark involved at all.)
 
+UPDATE (2026-07-15, diagnosed + fixed live on nym2-client2 after it went
+fully SSH/ICMP-unreachable post-reboot): priority 5 stopped being low enough.
+nym-vpnd now also installs a priority-4 catch-all kill-switch rule —
+"not fwmark 0x14d -> lookup 333" (routes anything NOT carrying nym's own
+tunnel-infra fwmark into the tunnel table) — which is evaluated before
+priority 5 ever is. The mangle-mark exemption below (step 5) is supposed to
+route around this by marking SSH's own traffic with that same 0x14d, but it
+depends on those mangle rules surviving reboots/nftables changes intact;
+confirmed live that when they don't (e.g. after an `nft flush ruleset`,
+since Ubuntu's iptables is nftables-backed under the hood — an iptables rule
+IS an nftables rule here), SSH breaks completely (not just "captured by the
+tunnel like before" but zero response to ICMP or TCP at all) even though the
+priority-5 rule is present and correct. Moved to **priority 2** — below
+nym-vpnd's priority-4 rule too — so the fix wins on pure rule ordering
+regardless of fwmark/mangle state. The mangle-mark step is kept as
+defense-in-depth (harmless, never even consulted once priority 2 already
+resolved the route) but is no longer load-bearing on its own.
+
 SOLUTION:
   1. /usr/local/bin/nym-ssh-routing-fix.sh — idempotent, adds a
-     "from <public_ip> lookup 100" rule at priority 5 (below anything nym
-     has been observed to install), trusting netplan's own table 100 route
+     "from <public_ip> lookup 100" rule at priority 2 (below anything nym
+     has been observed to install, including its priority-4 kill-switch
+     rule — see UPDATE above), trusting netplan's own table 100 route
      as the source of truth rather than re-deriving the gateway (an earlier
      version derived it from eth0's own main-table default route via DHCP,
      which is racy at boot — confirmed live on nym2-client1: that route can
@@ -37,9 +56,21 @@ SOLUTION:
      it's reasserted after every path that can plausibly disturb routing,
      not just at boot.
 
-Also cleans up remnants of the old approach: the backwards
-"to <public_ip> lookup 100" rule and 0x14d mangle marks the old
-nym-routing-fix.sh installed, and removes that script itself.
+Also installs the iptables mangle rules that mark SSH traffic (port 22,
+both directions) with fwmark 0x14d — the SAME mark nym-vpnd's own nftables
+mangle chain uses for gateway-bound traffic. This is NOT optional: once the
+tunnel is up, nym-vpnd installs an ip rule "not fwmark 0x14d -> lookup 333"
+that routes any UNMARKED traffic (including SSH) into the tunnel table,
+breaking SSH. Marking our own SSH traffic with the same 0x14d exempts it
+from that catch-all so it falls through to this script's own "from
+<public_ip> lookup 100" rule instead. Confirmed live (2026-07-06): without
+these mangle rules, SSH reliably breaks within seconds of any connect
+attempt regardless of ip-rule priority (0, 1, or 5 all fail the same way);
+with them, SSH survives cleanly through a real connect on all modes tested
+(nym2 WireGuard, nym5 mixnet). See docs/infrastructure_routing.md for the
+full verification history — that document (from an earlier session) already
+described this exact mechanism as the verified fix; it just hadn't been
+carried over into this deploy script or applied to the 3 rebuilt VMs.
 
 Usage:
     python3 scripts/deploy_nym_ssh_routing_fix.sh
@@ -55,8 +86,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import paramiko
 from config.infrastructure import CLIENTS
+from collector.coordinator import _agent_key_matching_pubfile
 
-NYM_VMS = ["nym5-client1", "nym5-client2", "nym2-client1", "nym2-client2"]
+NYM_VMS = ["nym5-client1", "nym5-client2", "nym5-client3", "nym5-client4", "nym5-client5", "nym5-client6"]
 
 ROUTING_FIX_SCRIPT = """\
 #!/bin/bash
@@ -87,7 +119,7 @@ ROUTING_FIX_SCRIPT = """\
 
 IFACE=eth0
 TABLE=100
-PRIORITY=5
+PRIORITY=2
 
 # eth0's address itself is assigned immediately at boot (not racy) — it's
 # only eth0's DEFAULT ROUTE via DHCP that can be delayed/absent, which is
@@ -143,8 +175,12 @@ SERVICE_PATH      = "/etc/systemd/system/nym-ssh-routing-fix.service"
 
 
 def _ssh_connect_with_retry(host_cfg: dict, max_wait: int = 90, interval: int = 10) -> paramiko.SSHClient:
+    # pkey pinned via _agent_key_matching_pubfile (see coordinator.py) --
+    # avoids paramiko's blind agent-key enumeration crashing on leroy's
+    # unrelated ED25519-CERT identity (AttributeError: public_blob).
     key_path = os.environ.get("SSH_KEY") or host_cfg["key_path"]
     key_filename = str(Path(key_path).expanduser())
+    pkey = _agent_key_matching_pubfile(Path(key_filename))
     deadline = time.time() + max_wait
     last_err = None
     while time.time() < deadline:
@@ -154,6 +190,7 @@ def _ssh_connect_with_retry(host_cfg: dict, max_wait: int = 90, interval: int = 
             client.connect(
                 hostname=host_cfg["host"],
                 username=host_cfg["user"],
+                pkey=pkey,
                 key_filename=key_filename,
                 timeout=8,
             )
@@ -212,18 +249,36 @@ def deploy_vm(vm_name: str, cfg: dict) -> bool:
             return False
         print(f"        OK")
 
-        print(f"  [4/5] Cleaning up old nym-routing-fix.sh + 0x14d mangle marks ...")
+        print(f"  [4/6] Cleaning up old nym-routing-fix.sh remnant ...")
         _run(ssh, "rm -f /usr/local/bin/nym-routing-fix.sh")
-        _run(ssh, "iptables -t mangle -D PREROUTING -p tcp --dport 22 -j MARK --set-mark 0x14d 2>/dev/null || true")
-        _run(ssh, "iptables -t mangle -D OUTPUT -p tcp --sport 22 -j MARK --set-mark 0x14d 2>/dev/null || true")
         print(f"        OK")
 
-        print(f"  [5/5] Verification: ip rule show ...")
+        print(f"  [5/6] Installing fwmark-0x14d mangle rules for SSH (port 22, both directions) ...")
+        # Idempotent: only add if not already present.
+        rc, out, _ = _run(ssh, "iptables -t mangle -L PREROUTING -n | grep -c '0x14d' || true")
+        if out.strip() == "0" or not out.strip():
+            _run(ssh, "iptables -t mangle -A PREROUTING -p tcp --dport 22 -j MARK --set-mark 0x14d")
+            _run(ssh, "iptables -t mangle -A PREROUTING -p tcp --sport 22 -j MARK --set-mark 0x14d")
+            _run(ssh, "iptables -t mangle -A OUTPUT -p tcp --sport 22 -j MARK --set-mark 0x14d")
+            _run(ssh, "iptables -t mangle -A OUTPUT -p tcp --dport 22 -j MARK --set-mark 0x14d")
+        _run(ssh, "DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent")
+        rc, _, err = _run(ssh, "netfilter-persistent save")
+        if rc != 0:
+            print(f"  [FAIL] netfilter-persistent save: {err.strip()}")
+            return False
+        _, out_mangle, _ = _run(ssh, "iptables -t mangle -L -n")
+        mangle_ok = out_mangle.count("0x14d") >= 4
+        if not mangle_ok:
+            print(f"  [FAIL] expected 4 mangle rules with 0x14d, found {out_mangle.count('0x14d')}")
+            return False
+        print(f"        OK")
+
+        print(f"  [6/6] Verification: ip rule show ...")
         _, out_rule, _ = _run(ssh, "ip rule show")
         print(f"        {out_rule.strip().splitlines()}")
-        rule_ok = any(line.strip().startswith("5:") and "lookup 100" in line for line in out_rule.splitlines())
+        rule_ok = any(line.strip().startswith("2:") and "lookup 100" in line for line in out_rule.splitlines())
         if not rule_ok:
-            print(f"  [FAIL] priority-5 rule not found in ip rule show")
+            print(f"  [FAIL] priority-2 rule not found in ip rule show")
             return False
 
         print(f"  [PASS] {vm_name}")

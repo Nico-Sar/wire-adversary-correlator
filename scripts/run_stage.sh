@@ -101,6 +101,20 @@ for name, cfg in CLIENTS.items():
 "
 )
 
+# Group membership sourced live from config/infrastructure.py, same reason
+# as CLIENT_IP above (2026-07-20: hardcoded nym5-client1/2-only candidate
+# lists silently excluded nym5-client3/4 after they were added to
+# CLIENT_GROUPS — config and this script's candidate lists must not drift).
+declare -A CLIENT_GROUP
+while IFS='=' read -r k v; do CLIENT_GROUP["$k"]="$v"; done < <(
+    "$COORDINATOR_PYTHON" -c "
+import sys; sys.path.insert(0, '$REPO_ROOT')
+from config.infrastructure import CLIENT_GROUPS
+for mode, clients in CLIENT_GROUPS.items():
+    print(f'{mode}=' + ' '.join(clients))
+"
+)
+
 # ── 0. Pre-flight ──────────────────────────────────────────────────────────────
 RUN_FULL=0; RUN_TOR=0; RUN_LIGHT=0
 if [[ "$FULL_URLS" != "NONE" ]]; then
@@ -193,14 +207,14 @@ ensure_client_reachable() {
 
 CANDIDATES=()
 if [[ "$MODE_SCOPE" != "nym5" ]]; then
-    (( RUN_FULL ))  && CANDIDATES+=(vpn-client1 vpn-client2)
-    (( RUN_TOR ))   && CANDIDATES+=(tor-client1 tor-client2)
+    (( RUN_FULL ))  && CANDIDATES+=(${CLIENT_GROUP[vpn]})
+    (( RUN_TOR ))   && CANDIDATES+=(${CLIENT_GROUP[tor]})
 fi
 if [[ "$MODE_SCOPE" != "fast" ]]; then
-    (( RUN_LIGHT )) && CANDIDATES+=(nym5-client1 nym5-client2)
+    (( RUN_LIGHT )) && CANDIDATES+=(${CLIENT_GROUP[nym5]})
 fi
 if [[ "$MODE_SCOPE" != "nym5" ]]; then
-    (( RUN_LIGHT )) && CANDIDATES+=(nym2-client1 nym2-client2)
+    (( RUN_LIGHT )) && CANDIDATES+=(${CLIENT_GROUP[nym2]})
 fi
 
 REACHABLE=()
@@ -249,14 +263,18 @@ is_reachable() { printf '%s\n' "${REACHABLE[@]}" | grep -qx "$1"; }
 # for this pass) but is now simply never invoked from here again.
 
 log "Launching stage: ${#REACHABLE[@]} clients (${REACHABLE[*]:-none}) -- vpn=$RUN_FULL tor=$RUN_TOR light=$RUN_LIGHT"
-is_reachable vpn-client1  && (( RUN_FULL )) && launch_client vpn-client1  vpn  "$FULL_URLS" "$VISITS_FULL"
-is_reachable vpn-client2  && (( RUN_FULL )) && launch_client vpn-client2  vpn  "$FULL_URLS" "$VISITS_FULL"
-is_reachable tor-client1  && (( RUN_TOR ))  && launch_client tor-client1  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
-is_reachable tor-client2  && (( RUN_TOR ))  && launch_client tor-client2  tor  "$TOR_URLS"  "$VISITS_FULL" --rotate-circuits
-is_reachable nym5-client1 && launch_client nym5-client1 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym5-client2 && launch_client nym5-client2 nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client1 && launch_client nym2-client1 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
-is_reachable nym2-client2 && launch_client nym2-client2 nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+for c in ${CLIENT_GROUP[vpn]:-}; do
+    is_reachable "$c" && (( RUN_FULL )) && launch_client "$c" vpn "$FULL_URLS" "$VISITS_FULL"
+done
+for c in ${CLIENT_GROUP[tor]:-}; do
+    is_reachable "$c" && (( RUN_TOR )) && launch_client "$c" tor "$TOR_URLS" "$VISITS_FULL" --rotate-circuits
+done
+for c in ${CLIENT_GROUP[nym5]:-}; do
+    is_reachable "$c" && launch_client "$c" nym5 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+done
+for c in ${CLIENT_GROUP[nym2]:-}; do
+    is_reachable "$c" && launch_client "$c" nym2 "$LIGHT_URLS" "$VISITS_LIGHT" --rotate-circuits --rotate-every "$ROTATE_EVERY_NYM"
+done
 
 # REMOVED (2026-07-12): §3c backfill stop-file monitor — see the note at
 # the launch step above for why the whole subsystem is gone, not adapted.

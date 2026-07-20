@@ -1071,7 +1071,24 @@ _NYM_RECONNECT_RETRY_DELAY_S = 15
 # working pattern: write the reconnect+reassert steps to a script, launch it
 # nohup'd so it survives the channel dying, close this channel proactively,
 # then open a fresh SSH connection rather than trust the old one.
-_NYM_TIER1A_RECONNECT_WAIT_S = 40   # reconnect (~30s) + post-connect.sh (~5s) + margin
+_NYM_TIER1A_RECONNECT_WAIT_S = 100  # 2026-07-21: was 40, calibrated for the old
+                                     # single-line "nym-vpnc reconnect" script.
+                                     # Tier1a's dispatched script is now the full
+                                     # _build_nym_rotate_script() sequence (see
+                                     # its own 2026-07-21 comment) -- preamble
+                                     # (~20s) + disconnect+sleep (~9s) + up to a
+                                     # 5x/5s-backoff socks5-enable retry loop
+                                     # (~30s worst case) + connect --wait
+                                     # (empirically ~10-60s) + post-connect.sh
+                                     # (~5s) can exceed 100s worst case on its
+                                     # own. 40s was cutting this off mid-script
+                                     # every time -- confirmed live: both Tier1a
+                                     # attempts failed identically at "SOCKS5
+                                     # port 1080 not listening" immediately
+                                     # after this wait, for a client whose own
+                                     # isolated rotate_circuit_nym run (same
+                                     # script) succeeded within ~60s including
+                                     # its own generous margin.
 # hcloud per-server lock + retry-on-locked constants.
 # "resource is locked" is a transient Hetzner API state (action already in
 # flight on that server). Retry with exponential backoff instead of failing;
@@ -1481,14 +1498,24 @@ def _recover_wedged_client_impl(client_id: str, client_cfg: dict, mode: str) -> 
                 # dying, and SSH-safety is reasserted unconditionally inside
                 # that same script rather than over a channel that may
                 # already be gone by the time a follow-up command is sent.
-                socks5_line = (
-                    "nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 "
-                    "--exit-random 2>/dev/null || true\n" if mode == "nym5" else ""
-                )
-                tier1a_script = (
-                    "nym-vpnc reconnect 2>/dev/null || true\n"
-                    + socks5_line
-                    + "/usr/local/bin/nym-post-connect.sh 2>/dev/null || true\n"
+                #
+                # 2026-07-21: this used to build its own, weaker ad-hoc script
+                # ("nym-vpnc reconnect ... || true" + a single non-retrying
+                # socks5 enable). Confirmed live -- on a freshly-booted daemon
+                # with no prior session (the state every client now starts in,
+                # since the boot-time auto-connect hook was removed as a
+                # deadlock source), "reconnect" has nothing to reconnect FROM
+                # and is a silent no-op (errors swallowed by || true), so
+                # SOCKS5 never came up and every wedge-recovery attempt looped
+                # forever. rotate_circuit_nym's _build_nym_rotate_script is
+                # the one PROVEN command sequence (12/12 clean visits in the
+                # last known-good run) -- it calls `nym-vpnc connect --wait`,
+                # not `reconnect`, plus a 5x-retrying socks5 enable. Reusing
+                # it here instead of a second, divergent implementation.
+                route_restore = ("enp7s0" if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER
+                                  else "eth0")
+                tier1a_script = _build_nym_rotate_script(
+                    socks5=(mode == "nym5"), route_restore=route_restore
                 )
                 try:
                     sftp = ssh.open_sftp()

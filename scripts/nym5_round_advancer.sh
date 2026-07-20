@@ -77,7 +77,7 @@ launch() {
     sf="$(stage_file "$stage")"
     mkdir -p "$rd"
     cd "$REPO_ROOT"
-    setsid nohup "$COORDINATOR_PYTHON" -m collector.coordinator --mode nym5 \
+    setsid nohup "$COORDINATOR_PYTHON" -u -m collector.coordinator --mode nym5 \
         --urls "$sf" --visits "$VISITS" \
         --output "$rd" --client "$client" --rotate-circuits --rotate-every 3 \
         > "$rd/log_${client}.txt" 2>&1 < /dev/null &

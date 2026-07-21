@@ -54,7 +54,7 @@ paramiko.agent.AgentKey.__getattr__ = _safe_agentkey_getattr
 
 from config.infrastructure import (
     BPF_EGRESS, CLIENT_GROUPS, CLIENTS, EGRESS_ROUTER,
-    INGRESS_ROUTER, MAX_CLOCK_DRIFT_MS, PROXY_MAP,
+    INGRESS_ROUTER, MAX_CLOCK_DRIFT_MS, NYM_EXIT_GATEWAY_ID, PROXY_MAP,
     SNAPSHOT_LENGTH, TOR_CONTROL_PASSWORD, URL_BASE, WEB_SERVER,
     build_ingress_bpf,
 )
@@ -589,11 +589,26 @@ def _build_nym_rotate_script(socks5: bool, route_restore: str = "eth0") -> str:
     preamble = _nym_script_preamble(route_restore)
     if socks5:
         # nym5: clear existing state, re-enable SOCKS5, connect.
+        #
+        # 2026-07-21: --exit-random switched to the pinned NYM_EXIT_GATEWAY_ID.
+        # Confirmed live -- fleet-wide, repeatedly, over several hours
+        # (including the 4h+ the now-disabled nym-watchdog.service spent
+        # hammering this exact call) -- --exit-random fails with "Failed to
+        # lookup gateways with SOCKS5 data: failed to get gateways" on the
+        # enable call itself (before any gateway is even selected), not just
+        # occasional flakiness in the post-rotation probe. NYM_EXIT_GATEWAY_ID
+        # is the same node the old (now-removed) post-connect.conf hook
+        # pinned successfully for months ("verified live across 8 rotations /
+        # 8 distinct entry mix-nodes" per its own comment in
+        # config/infrastructure.py) -- a random EXIT selection, not entry, so
+        # entry-node diversity across rotations is unaffected. Trades exit-
+        # node diversity for actually connecting; revisit if gateway lookup
+        # recovers.
         socks5_block = (
             "nym-vpnc socks5 disable || true\n"
             "sleep 1\n"
             "for i in 1 2 3 4 5; do\n"
-            "    nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 --exit-random && break\n"
+            f"    nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 --exit-id {NYM_EXIT_GATEWAY_ID} && break\n"
             '    echo "socks5 enable attempt $i failed, retrying in 5s..."\n'
             "    sleep 5\n"
             "done\n"
@@ -809,11 +824,11 @@ def rotate_circuit_nym(
                     ssh_run(
                         new_ssh,
                         "nym-vpnc socks5 enable --socks5-address 127.0.0.1:1080 "
-                        "--exit-random 2>/dev/null || true",
+                        f"--exit-id {NYM_EXIT_GATEWAY_ID} 2>/dev/null || true",
                         check=False,
                     )
                 except Exception as e:
-                    print(f"  [rotate-nym]  ssh dropped re-issuing --exit-random ({e}) — reconnecting")
+                    print(f"  [rotate-nym]  ssh dropped re-issuing --exit-id ({e}) — reconnecting")
                     try:
                         new_ssh.close()
                     except Exception:

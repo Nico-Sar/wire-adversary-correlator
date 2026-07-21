@@ -568,8 +568,28 @@ _NYM5_POST_ROTATE_PROBE_RETRY_SLEEP_S = 5  # settle time after re-issuing --exit
 #
 # SOCKS5 setup is only needed for nym5 (mixnet/5-hop); nym2 uses WireGuard.
 _NYM_ROUTE_RESTORE = {
-    "eth0":   "ip route replace default via 172.31.1.1 dev eth0 2>/dev/null || true\n",
-    "enp7s0": "ip route replace default via 10.0.0.1 dev enp7s0 proto static onlink 2>/dev/null || true\n",
+    "eth0": "ip route replace default via 172.31.1.1 dev eth0 2>/dev/null || true\n",
+    # 2026-07-21: "enp7s0" used to force-replace the WHOLE SYSTEM default
+    # route via "ip route replace default via 10.0.0.1 dev enp7s0" -- this
+    # does not match the documented/validated design (see
+    # Documents/nym_technical_fix.docx and network_architecture.docx):
+    # eth0 is the intended general-internet path, enp7s0 only carries
+    # nym5's own tunnel traffic (confirmed there via nym-vpnd's own outbound
+    # connections naturally sourcing from 10.0.0.9/enp7s0 for its port
+    # 9000/9001 gateway traffic, with no default-route override needed),
+    # and SSH safety on the enp7s0-routed clients is already handled
+    # separately by nym-ssh-routing-fix.sh (a non-destructive "to <ip>
+    # lookup 100" rule, called at the end of nym-post-connect.sh). Confirmed
+    # live: this same destructive route-replace line also existed,
+    # independently, as a stale/rogue systemd unit (nym-routing-fix.service)
+    # that had never been disabled after being superseded -- so it was
+    # being applied from TWO places. Between them, client1/2's general
+    # internet egress (needed for nym-vpnd's own gateway-lookup API calls)
+    # was broken every single connect/rotate/wedge-recovery cycle, which is
+    # what caused the "Failed to lookup gateways" failures fleet-wide for
+    # these two clients. No override needed here -- netplan's own enp7s0
+    # route declaration plus nym-ssh-routing-fix.sh already cover it.
+    "enp7s0": "",
 }
 
 def _nym_script_preamble(route_restore: str) -> str:

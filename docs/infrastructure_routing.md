@@ -1,12 +1,20 @@
 # Routing Architecture: Forcing Nym Traffic Through the Wire Adversary Capture Point
 
-> **Status as of this writing**: all four nym clients
-> (`nym2-client1`, `nym2-client2`, `nym5-client1`, `nym5-client2`) are
-> migrated, reboot-persistence-verified, and pass a 2-3 visit wire gate each.
-> Ingress BPF filters are now per-client scoped (§8) to prevent
-> cross-contamination between same-mode clients, and a wedge detection/
-> recovery layer (§9) requeues visits affected by the recurring
+> **Status as of this writing**: all six nym5 clients (`nym5-client1`
+> through `nym5-client6`) plus `nym2-client1`/`nym2-client2` are migrated
+> into `_NYM_CLIENTS_VIA_INGRESS_ROUTER`, and each has been individually
+> wire-verified producing real successful visits with non-zero (1000+
+> packet) ingress captures. Ingress BPF filters are per-client scoped (§8)
+> to prevent cross-contamination between same-mode clients, and a wedge
+> detection/recovery layer (§9) requeues visits affected by the recurring
 > `nym-vpnd`-correlated lockups instead of losing or false-passing them.
+> **2026-07-21: see §11** for a full regression that took nym5-client1/2
+> from "12/12 known-good" to zero collected visits, its root cause (five
+> independent destructive-route sources plus one genuinely-missing
+> router-level NAT rule, all stacked), and the fix — which also fixed the
+> pre-existing `ZERO_INGRESS` issue on client3/4/5/6 as a side effect,
+> since they hit the exact same missing piece client1/2's regression
+> exposed.
 > Earlier drafts of this document described a netplan-based, all-4-VMs
 > deployment as already in place before any of it was verified; that
 > speculation has since been replaced by what was actually verified on the
@@ -308,8 +316,11 @@ unattended sequence.
 
 ## 10. Known Gaps / Follow-Up
 
-- All four nym clients (`nym2-client1`, `nym2-client2`, `nym5-client1`,
-  `nym5-client2`) are now migrated, reboot-verified, and pass a wire gate.
+- All four original nym clients (`nym2-client1`, `nym2-client2`,
+  `nym5-client1`, `nym5-client2`) were migrated, reboot-verified, and passed
+  a wire gate as of the original investigation. **See §11 for a full
+  regression and re-fix of client1/2, and the extension of this same
+  migration to nym5-client3/4/5/6.**
   `baseline`, `vpn`, `tor` clients were **not** touched — they were never
   reported broken and weren't in scope, but they do share the same
   ingress-capture mechanism and now benefit from per-client BPF scoping
@@ -325,4 +336,174 @@ unattended sequence.
   rotation script — it bypasses the nft-safety wrapping
   (nohup + `post-connect.sh`) that the production rotate script relies on,
   and was observed to trigger an SSH-blocking nft kill-switch state when
-  done as a manual one-off during this investigation.
+  done as a manual one-off during this investigation. **§11 adds a second,
+  narrower instance of this same hazard**: applying a `netplan apply` (not
+  just `nym-vpnc connect`) to a client while its nym tunnel is actively
+  connected can also trigger the same nft kill-switch lockout — always
+  disconnect (`nym-vpnc disconnect`) before a live netplan change.
+
+## 11. 2026-07-21 Regression: Five Stacked Destructive-Route Sources + a Genuinely Missing Router NAT Rule
+
+### 11.1 Symptom
+
+`nym5-client1`/`client2`, which had been collecting cleanly (client1's own
+`coordinator.py` comment cites "12/12 clean visits in the last known-good
+run"), started producing **zero** visits. `nym-vpnd` was reported `active`
+by systemd throughout — which is *not* sufficient evidence of health; SOCKS5
+on port 1080 was never actually listening, and every wedge-recovery
+escalation eventually bottomed out at `hcloud server reset`, which also
+failed to restore health. Root-causing this took most of a session because
+the failure had **six independent contributing causes** stacked on top of
+each other, several of which looked sufficient on their own.
+
+### 11.2 Five Independent Sources of the Same Destructive Line
+
+The line `ip route replace default via 10.0.0.1 dev enp7s0` (no metric —
+i.e. force *everything* onto `enp7s0`, not just the nym tunnel) turned out
+to exist, independently, in **five separate places**, several long
+dormant/superseded but never removed:
+
+1. **A rogue `nym-routing-fix.service`** on `nym5-client1` — a stale systemd
+   unit whose original script (`/usr/local/bin/nym-routing-fix.sh`) had
+   already been deleted by `deploy_nym_ssh_routing_fix.sh`'s cleanup step,
+   but whose `ExecStart=` had at some point been hand-edited to an inline
+   copy of the destructive line, and the unit itself was never disabled.
+   Fix: `systemctl disable --now nym-routing-fix.service`.
+2. **`coordinator.py`'s `_NYM_ROUTE_RESTORE["enp7s0"]`** — see §3 above;
+   this was the *original*, intentional mechanism, but the assumption baked
+   into it (that a full default-route override was safe/necessary) turned
+   out to be only half right — see §11.3.
+3. **A metric-less `enp7s0` route in `/etc/netplan/99-thesis-routing.yaml`**
+   — see §11.3, this was never actually a bug on its own; "fixing" it by
+   adding a competing metric (making `eth0` always win) was a wrong turn
+   that had to be reverted once §11.3 was understood.
+4. **`nym-vpnd-safe-start.sh`'s `ExecStartPost` hook** — fires on *every*
+   `nym-vpnd` start (every boot, every Tier-1b restart, every `hcloud
+   server reset`), and contained the identical line. This one is
+   particularly dangerous because it reasserts within ~2 seconds of every
+   single daemon start, including ones triggered by wedge-recovery itself —
+   so even a clean reboot immediately re-broke things.
+5. **`coordinator.py`'s Tier-1b wedge-recovery restart path**
+   (`recover_wedged_client` → `systemctl restart nym-vpnd`) had its own
+   unconditional copy, run after every soft-restart recovery attempt.
+
+All five were removed/neutralized. See the `2026-07-21` comments at each
+site in `collector/coordinator.py` (`_NYM_ROUTE_RESTORE`, the Tier-1b
+restart block) for the in-code record.
+
+### 11.3 The Real Design (Recovered from `nym_technical_fix.docx`, Not Guessed)
+
+Removing all five sources above made general connectivity/SOCKS5 come back,
+but then every real visit came back `ZERO_INGRESS` — the ingress router's
+capture saw nothing. This looked like a contradiction (fixing connectivity
+broke ingress visibility) until re-reading `nym_technical_fix.docx` §5.3's
+netplan sample carefully: `eth0`'s default route lives **only inside
+`table: 100`**, gated by a `routing-policy` matching **source IP = the
+client's own public IP only** (which is exactly what `sshd` is bound to,
+per §5.1 of that doc). `enp7s0`'s default route has **no table qualifier**
+— it is the **main-table system default** for everything else, including
+`nym-vpnd`'s own gateway-lookup and tunnel (port 9000) traffic. This is a
+**source-IP policy split**, not a metric-based split.
+
+The earlier "fix" of adding `metric: 200` to `enp7s0`'s netplan route (to
+make `eth0` win) directly contradicted this — it routed *all* traffic via
+`eth0`, including the client's own port-9000 gateway traffic, which then
+never transited the ingress router's tap at all. **This metric-based
+override was reverted**; the correct fix is simply removing the metric so
+`enp7s0` naturally wins the main table, exactly as documented.
+
+For this to actually work end-to-end (not just be visible at the tap, but
+also reach a *real* internet gateway and come back), one more piece is
+required: NAT. Hetzner's private network (`thesis-client-net`) has an
+SDN-level route `0.0.0.0/0 → 10.0.0.2` (the ingress router) — confirmed via
+`hcloud network describe thesis-client-net` — genuinely enforced at the
+hypervisor level for traffic leaving the `10.0.0.0/16` range. The ingress
+router needs `iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE` to
+actually get that forwarded traffic onto the real internet — **the exact
+same rule already documented in §3.4 of `network_architecture.docx`** for
+the (separate) DNAT web-visit flow, evidently doing double duty. Per that
+doc's own §5, **all iptables rules are runtime-only, lost on reboot** — and
+the ingress router's NAT table was confirmed (read-only check) completely
+empty. This was the concrete thing that "existed 24h ago and was gone" —
+not a mystery, not a new mechanism, just a documented, non-persistent rule
+that fell off on a router reboot unrelated to anything in this session.
+
+**Fix, confirmed both-legs on the wire** (real visit success **and**
+non-empty ingress pcap, thousands of packets per visit):
+- Re-add `iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE` on the
+  ingress router, persisted via `netfilter-persistent save` (needs
+  `iptables-persistent` installed) so it survives the next reboot instead
+  of silently vanishing again.
+- On each client: netplan's `enp7s0` default route must have **no metric**
+  (main-table default), `eth0`'s default route must live **only** inside
+  `table: 100` behind the source-IP `routing-policy` rule. This is now the
+  standard `99-thesis-routing.yaml` template (see file listing below).
+- `nym-ssh-routing-fix.service` (§2/§7's pre-existing SSH-safety net) must
+  actually be *running*, not just `enabled` — a fresh `netplan apply` or
+  reboot can leave only the netplan-declared priority-100 rule active
+  without the service's own priority-2 reassertion; `systemctl restart
+  nym-ssh-routing-fix.service` fixes this immediately (idempotent, safe to
+  run anytime).
+
+### 11.4 Extending the Migration to client3/4/5/6
+
+`nym5-client3/4/5/6` were never in `_NYM_CLIENTS_VIA_INGRESS_ROUTER`, so
+they always used `route_restore="eth0"` — meaning `coordinator.py`'s own
+`_NYM_ROUTE_RESTORE["eth0"]` line (`ip route replace default via
+172.31.1.1 dev eth0`, no metric) was unconditionally clobbering *any*
+`enp7s0` default route on every connect/rotate, which is exactly why they
+were always `ZERO_INGRESS` even though their visits otherwise succeeded.
+Fixing §11.3 for client1/2 and adding client3-6 to
+`_NYM_CLIENTS_VIA_INGRESS_ROUTER` was the *entire* fix for this — no new
+mechanism, `_NYM_ROUTE_RESTORE["enp7s0"]` is already a no-op. Practically:
+
+- `nym5-client5`/`nym5-client6` already carried the correct
+  `99-thesis-routing.yaml` (a leftover from their prior life as
+  `vpn-client1`/`vpn-client2`) — only needed the code-level group
+  membership change plus a `netplan apply` to make it live (it had been
+  getting clobbered every cycle, same as above) and a
+  `nym-ssh-routing-fix.service` restart.
+- `nym5-client3`/`nym5-client4` had no `99-thesis-routing.yaml` at all —
+  deployed fresh (same template, each client's own public IP).
+- All four also had the old destructive `nym-vpnd-safe-start.sh` (§11.2
+  item 4) — redeployed the fixed version fleet-wide.
+- **Always disconnect (`nym-vpnc disconnect`) before applying a netplan
+  change to a client with an active tunnel** — confirmed live on
+  `nym5-client2`: applying netplan while the tunnel was live triggered the
+  same SSH-lockout hazard noted in §10 for `nym-vpnc connect`, apparently
+  via the interface bounce disrupting the tunnel's own kill-switch/mangle
+  state. Recovered via `hcloud server reset`; all subsequent netplan
+  changes this session were preceded by a disconnect and had no issue.
+- Separately, `client3`/`client4` also had `python3-pip`/`playwright`/
+  Firefox missing entirely (pre-existing, unrelated to routing) — installed
+  fresh. An `/etc/apt/apt.conf.d/99socks` file forcing **all** apt traffic
+  through the client's own nym5 SOCKS5 proxy was found and disabled on
+  `client4` (renamed to `.disabled`, not deleted) — it made package
+  installs fail/flake depending on tunnel state for no compensating
+  benefit; general apt traffic doesn't need to transit the mixnet.
+
+### 11.5 Current `99-thesis-routing.yaml` Template
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    eth0:
+      routing-policy:
+        - from: <client's own public IP>
+          table: 100
+          priority: 100
+      routes:
+        - to: default
+          via: 172.31.1.1
+          table: 100
+    enp7s0:
+      routes:
+        - to: default
+          via: 10.0.0.1
+        - to: 10.1.0.0/16
+          via: 10.0.0.1
+```
+
+No `metric:` on the `enp7s0` default route — that is the one field that
+must never be added back (see §11.3).

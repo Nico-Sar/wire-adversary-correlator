@@ -899,7 +899,30 @@ def rotate_circuit_nym(
 # router (table-100 SSH safety verified live first) — see _NYM_ROUTE_RESTORE.
 # Only add a client here after independently verifying its table-100/fwmark
 # SSH-safety net, same as was done for nym2-client1.
-_NYM_CLIENTS_VIA_INGRESS_ROUTER = {"nym2-client1", "nym5-client1", "nym2-client2", "nym5-client2"}
+#
+# 2026-07-21: extended to nym5-client3/4/5/6. Root-caused their ZERO_INGRESS
+# classification to the same missing piece client1/2 had (nym5-client1/2's
+# own regression, fixed same day): general internet + the nym5 tunnel's own
+# port-9000 gateway traffic must transit enp7s0 (main-table default route,
+# carved out per documented design via a source-IP policy rule to eth0/table
+# 100 for the client's own public-IP-sourced traffic only -- see
+# Documents/nym_technical_fix.docx section 5.3) so it's visible at the
+# ingress router's tap and so the ingress router's MASQUERADE (-o eth0,
+# restored same day) can actually get it onto the real internet. Confirmed
+# live: client5/6 already carried the correct netplan (a leftover from their
+# prior life as vpn-client1/2), but this dict not including them meant
+# route_restore resolved to "eth0", and _NYM_ROUTE_RESTORE["eth0"]'s
+# unconditional "ip route replace default via <eth0 gw> dev eth0" was
+# clobbering that netplan-declared enp7s0 default on every single
+# connect/rotate/wedge-recovery cycle. Membership here alone fixes it (routes
+# to the "enp7s0" no-op branch of _NYM_ROUTE_RESTORE instead) -- no other
+# code change needed, only per-VM netplan + nym-vpnd-safe-start.sh deploys
+# (client3/4 lacked the netplan file entirely; all four still had the old
+# destructive safe-start.sh).
+_NYM_CLIENTS_VIA_INGRESS_ROUTER = {
+    "nym2-client1", "nym5-client1", "nym2-client2", "nym5-client2",
+    "nym5-client3", "nym5-client4", "nym5-client5", "nym5-client6",
+}
 
 
 def maybe_rotate_circuit(
@@ -1599,10 +1622,22 @@ def _recover_wedged_client_impl(client_id: str, client_cfg: dict, mode: str) -> 
         else:
             print(f"  [wedge-recovery] {client_id}: restarting nym-vpnd service")
             try:
+                # 2026-07-21: used to force "ip route replace default via
+                # 10.0.0.1 dev enp7s0" here unconditionally after every
+                # restart -- the same destructive default-route override
+                # found stacked in FOUR other places this session (a rogue
+                # nym-routing-fix.service, _NYM_ROUTE_RESTORE, a metric-less
+                # netplan enp7s0 route, and nym-vpnd-safe-start.sh's
+                # ExecStartPost hook). This was the 5th and last of them,
+                # confirmed live: it re-broke client1/2's general-internet
+                # egress (needed for nym-vpnd's own gateway-lookup API
+                # calls) on literally every Tier-1b restart, undoing the
+                # other four fixes within seconds every time. systemd's
+                # ExecStartPost (nym-vpnd-safe-start.sh, now itself fixed to
+                # call the non-destructive nym-ssh-routing-fix.sh) already
+                # runs on every "systemctl restart" and handles SSH safety
+                # correctly -- no override needed here.
                 ssh_run(ssh, "systemctl restart nym-vpnd", check=False)
-                if client_id in _NYM_CLIENTS_VIA_INGRESS_ROUTER:
-                    ssh_run(ssh, "ip route replace default via 10.0.0.1 dev enp7s0 "
-                                 "proto static onlink", check=False)
                 healthy, reason = _poll_until_healthy(ssh, mode)
                 if healthy:
                     return True, "soft_restart_nym_vpnd", ssh

@@ -5,8 +5,8 @@ Gaussian KDE transform: packet timestamps → continuous density wave.
 Follows the ShYSh shape computation exactly:
   - Convolves a sum of Dirac deltas (one per packet) with a Gaussian kernel
   - Evaluated on a regular time grid with sampling period T
-  - Normalized so that sum(shape) == n_grid_samples (ShYSh convention,
-    scale-invariant across modes with different durations)
+  - Normalized so that sum(shape) == N_F, the packet count within the
+    analysis window (ShYSh Eq. 3) — amplitude encodes packet volume
 Reference: ShYSh paper, Section III-A "Flow Shape Signal Computation"
   sigma = 0.125s, T = 0.1s (defaults — tune for TCP layer)
 """
@@ -53,9 +53,21 @@ def kde_shape(timestamps: list[float],
     """
     Computes the KDE shape signal from a list of packet timestamps.
     Returns a 1D float32 array of length ceil(duration / t_sample).
-    Normalized so that sum(output) == n_samples (grid length), following ShYSh.
-    This makes the scale invariant to flow duration and comparable across modes
-    with different durations (30 s → 300 samples, 60 s → 600 samples).
+    Normalized so that sum(output) == N_F, the number of packets landing
+    inside [0, duration) (ShYSh Eq. 3: S[n] = (N_F / sum_k S(kT)) * S(nT)).
+    Amplitude therefore encodes real packet volume, not just relative
+    timing — restored 2026-07-23 after 2026-07-18..2026-07-23 used a
+    size-invariant sum(output)==n_samples convention instead (see git log
+    on this file; that change landed separately from and six days after
+    the per-mode sigma/d retuning in config/kde_params.py — drift, not a
+    co-designed choice).
+
+    NOTE: N_F counts only timestamps within [0, duration), NOT
+    len(timestamps) — callers (quartet_builder.py) carve a much wider
+    window than `duration` before calling this function (visits can span
+    well beyond the analysis window, e.g. nym5 up to ~140s against a 30s
+    duration), so len(timestamps) would overcount for any flow with
+    activity extending past the window.
 
     Args:
         timestamps: list of relative packet arrival times in seconds
@@ -75,6 +87,10 @@ def kde_shape(timestamps: list[float],
         return np.zeros(n_samples, dtype=np.float32)
 
     t_arr = np.array(timestamps, dtype=np.float64)
+    n_f = int(np.sum((t_arr >= 0.0) & (t_arr < duration)))
+
+    if n_f == 0:
+        return np.zeros(n_samples, dtype=np.float32)
 
     # Extend grid by 3σ on each side so boundary packets get full kernel support.
     n_pad   = int(np.ceil(3.0 * sigma / t_sample))    # padding samples per side
@@ -90,10 +106,9 @@ def kde_shape(timestamps: list[float],
     # Crop: slice [n_pad : n_pad + n_samples] corresponds exactly to t ∈ [0, duration)
     shape = shape[n_pad : n_pad + n_samples]
 
-    # Normalize: sum(shape) == n_samples (ShYSh convention).
-    # Makes the output scale-invariant to packet count and grid length.
+    # Normalize: sum(shape) == N_F (ShYSh Eq. 3).
     raw_sum = shape.sum()
     if raw_sum > 0:
-        shape = shape * (n_samples / raw_sum)
+        shape = shape * (n_f / raw_sum)
 
     return shape.astype(np.float32)

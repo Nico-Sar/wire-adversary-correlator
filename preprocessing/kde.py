@@ -56,11 +56,15 @@ def kde_shape(timestamps: list[float],
     Normalized so that sum(output) == N_F, the number of packets landing
     inside [0, duration) (ShYSh Eq. 3: S[n] = (N_F / sum_k S(kT)) * S(nT)).
     Amplitude therefore encodes real packet volume, not just relative
-    timing — restored 2026-07-23 after 2026-07-18..2026-07-23 used a
-    size-invariant sum(output)==n_samples convention instead (see git log
-    on this file; that change landed separately from and six days after
-    the per-mode sigma/d retuning in config/kde_params.py — drift, not a
-    co-designed choice).
+    timing — restored 2026-07-23 after commit cf7735677 (2026-04-29) had
+    switched this to a size-invariant sum(output)==n_samples convention
+    instead. That commit's message describes an unrelated feature bundle
+    (5-mode coordinator, nym2 WireGuard capture, etc.) and says nothing
+    about normalization; the only justification was a docstring comment
+    added in the same commit, with no design doc or issue backing it.
+    Predates (not follows) the per-mode sigma/d retuning in
+    config/kde_params.py (2026-07-12) by about 2.5 months — drift riding
+    along in an unrelated commit, not a co-designed choice.
 
     NOTE: N_F counts only timestamps within [0, duration), NOT
     len(timestamps) — callers (quartet_builder.py) carve a much wider

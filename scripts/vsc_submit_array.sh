@@ -19,7 +19,7 @@ cd "$BUNDLE_DIR"
 mkdir -p logs
 
 echo "Submitting 20-task array (4 modes x 5 seeds) to batch_graniterapids..."
-out=$(sbatch -M mindwell --array=0-19 scripts/vsc_run_array.slurm)
+out=$(sbatch -M mindwell -A mindwelldefaultslurmaccount --array=0-19 scripts/vsc_run_array.slurm)
 echo "$out"
 jid=$(echo "$out" | awk '{print $NF}')
 

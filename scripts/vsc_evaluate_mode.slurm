@@ -1,4 +1,10 @@
 #!/bin/bash
+# DEPRECATED 2026-07-27: targets genius/gpu_p100 (wrong cluster for this
+# account); calls the old model.evaluate that materializes the full
+# cross-product instead of streaming it, with no TPR@FPR or ShYSh-style
+# PR-AUC-at-base-rates. Use scripts/vsc_run_array.slurm instead (calls the
+# rewritten model/evaluate.py). Kept for reference only, do not submit.
+#
 # scripts/vsc_evaluate_mode.slurm
 # =================================
 # Evaluates one mode's trained checkpoint on its test split (full

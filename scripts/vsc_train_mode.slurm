@@ -1,4 +1,9 @@
 #!/bin/bash
+# DEPRECATED 2026-07-27: targets genius/gpu_p100, but this account's actual
+# association is mindwell (confirmed via sacctmgr); predates checkpoint/
+# resume and seed control in model/train.py. Use scripts/vsc_run_array.slurm
+# instead. Kept for reference only, do not submit.
+#
 # scripts/vsc_train_mode.slurm
 # ==============================
 # Trains one mode's DualCNNCorrelator on VSC (genius cluster). One

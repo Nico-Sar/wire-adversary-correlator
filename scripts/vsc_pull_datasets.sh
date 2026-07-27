@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# DEPRECATED 2026-07-27: points at mode_datasets/{mode}_merged.npz in the
+# data repo, which no longer exists -- current layout is
+# datasets/{mode}/{mode}_merged.npz (see wire-adversary-correlator-data's
+# own history). Use a sparse clone instead (see
+# figures/phase1_shapes/README.md for the exact recipe) -- confirmed
+# working live on VSC 2026-07-27. Kept for reference only, do not run.
+#
 # scripts/vsc_pull_datasets.sh
 # ===============================
 # Pulls merged per-mode .npz datasets from the GitHub data repo's

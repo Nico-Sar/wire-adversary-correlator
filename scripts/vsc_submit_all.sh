@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED 2026-07-27: submits the old per-mode-only (no seed) jobs to
+# genius/gpu_p100. Use scripts/vsc_submit_array.sh instead (4 modes x 5
+# seeds, targets mindwell/batch_graniterapids). Kept for reference only.
+#
 # scripts/vsc_submit_all.sh
 # ===========================
 # Submits train -> evaluate (SLURM dependency chain) for every mode that

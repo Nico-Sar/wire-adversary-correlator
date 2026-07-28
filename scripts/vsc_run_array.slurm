@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 # scripts/vsc_run_array.slurm
 # ==============================
 # Trains + evaluates one (mode, seed) replicate as one SLURM array task.

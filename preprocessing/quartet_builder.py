@@ -68,6 +68,15 @@ def compute_quartet(ingress_pcap:      str,
     # zero nym2 visits ever got built. Modes without extra keys are unaffected.
     kde_only = {k: v for k, v in effective_kde.items() if k in ("duration", "sigma", "t_sample")}
 
+    # window_len/overlap are windower.py's parameters, not kde_shape()'s --
+    # previously silently dropped here (slice_windows() was called bare
+    # below, always falling back to its own KDE["window_len"]/KDE["overlap"]
+    # defaults), so the --window CLI flag in dataset_builder.py had no
+    # effect despite appearing to. Filtered the same way as kde_only so an
+    # unrelated key (e.g. nym2's min_packets) can't reach slice_windows()
+    # either.
+    window_only = {k: v for k, v in effective_kde.items() if k in ("window_len", "overlap")}
+
     # ── 1. Parse both pcaps ────────────────────────────────────────────────
     ingress_pkts = extract_packets(ingress_pcap, local_ip=ingress_local_ip)
     egress_pkts  = extract_packets(egress_pcap,  local_ip=egress_local_ip)
@@ -90,10 +99,10 @@ def compute_quartet(ingress_pcap:      str,
     egress_down_shape  = kde_shape(egress_down_ts,  **kde_only)
 
     # ── 5. Slice into overlapping windows ─────────────────────────────────
-    ingress_up   = slice_windows(ingress_up_shape)
-    ingress_down = slice_windows(ingress_down_shape)
-    egress_up    = slice_windows(egress_up_shape)
-    egress_down  = slice_windows(egress_down_shape)
+    ingress_up   = slice_windows(ingress_up_shape,   **window_only)
+    ingress_down = slice_windows(ingress_down_shape, **window_only)
+    egress_up    = slice_windows(egress_up_shape,    **window_only)
+    egress_down  = slice_windows(egress_down_shape,  **window_only)
 
     return {
         "ingress_up":      ingress_up,

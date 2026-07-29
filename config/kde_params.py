@@ -81,18 +81,14 @@ KDE_PER_MODE = {
     # buffer, landing at 30s — same window count as nym2 coincidentally.
     # Accepts truncation of the rare >30s outlier (max=140s) for the same
     # reason as tor above. n_windows=19.
-    # window_len RETUNED 2026-07-29 (30 -> 40, i.e. 4s not 3s per window):
-    # window_len pilot sweep found wl=40 best (0.3889) and wl=30 a close
-    # second (0.3875), both dramatically ahead of wl=10/15/20
-    # (0.2305-0.2549, a ~69% relative gap to wl=40) -- nym5 is the one mode
-    # that benefits from a LONGER window than the previous global default,
-    # consistent with it having the largest sigma (0.5s, mixing-delay-
-    # stretched structure) of any mode. This is also the mode where getting
-    # window_len right matters most: it's already the closest-to-chance
-    # mode in the full-campaign results, so a further ~69% relative
-    # improvement from re-tuning this one preprocessing parameter is
-    # substantial.
-    "nym5":     {"duration": 30.0,  "sigma": 0.5, "window_len": 40},
+    # window_len pilot sweep (2026-07-29): wl=40 scored best (0.3889), but
+    # against the actual prior default (wl=30, 0.3875) that's only +0.4%
+    # relative -- within single-seed pilot noise, not a real signal. (An
+    # earlier draft of this note compared wl=40 to the worst candidate,
+    # wl=15 at 0.2305, and reported that gap, ~69% relative, as if it were
+    # the improvement over the prior config -- it wasn't; corrected here.)
+    # Left at the global default (30), same reasoning as vpn.
+    "nym5":     {"duration": 30.0,  "sigma": 0.5},
     # nym2 (2-hop WireGuard): confirmed on pilot (56/59 visits built, span p95=9.2s, max=9.8s).
     # duration=30s: p95_span(9.2s)+10s buffer → 30s floor. n_windows=19 (same as vpn).
     # sigma=0.2: WireGuard UDP is high-density (~16k pkts/6s); inter-packet gap (~0.001s) is

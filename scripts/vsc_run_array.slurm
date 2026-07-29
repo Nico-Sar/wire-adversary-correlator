@@ -48,7 +48,11 @@
 #SBATCH --partition=batch_graniterapids
 #SBATCH --time=08:00:00
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=32G
+#SBATCH --mem=96G
+# Raised from 32G (2026-07-29): tor/nym2's retuned window_len (30->10
+# samples) roughly triples windows-per-flow, and evaluate.py's chunked
+# cross-product memory scales with that -- OOM-killed all 10 tor/nym2
+# tasks at 32G. Paired with a smaller CHUNK_ING in evaluate.py itself.
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
 #SBATCH --signal=B:TERM@180

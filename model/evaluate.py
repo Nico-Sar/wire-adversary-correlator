@@ -51,7 +51,14 @@ from model.cnn import DualCNNCorrelator
 
 TARGET_BASE_RATES = [1.9e-4, 1.9e-5, 1.9e-6]
 TARGET_FPRS = [1e-2, 1e-3, 1e-4, 1e-5]
-CHUNK_ING = 100  # ingress rows per outer chunk -- bounds peak memory
+CHUNK_ING = 40  # ingress rows per outer chunk -- bounds peak memory
+# Reduced from 100 (2026-07-29): the per-mode window_len retune (tor/nym2:
+# 30->10 samples) roughly triples windows-per-flow (32s duration: ~20
+# windows at wl=30 vs ~63 at wl=10), and this chunked cross-product's peak
+# tensor memory scales directly with window count -- caused an OOM kill on
+# VSC (32GB alloc) that hadn't happened before the retune. 40 gives
+# comparable effective chunk memory to the old CHUNK_ING=100/wl=30
+# combination (100/3.15~=32, rounded up for a little margin).
 
 
 def _get_split_indices(data, split):

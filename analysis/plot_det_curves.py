@@ -6,11 +6,18 @@ DET (detection error tradeoff) curves from the 20-run VSC array job
 scripts/vsc_extract_det_curves.py (analysis/det_curves.json) -- not the raw
 per-run eval.json files.
 
-Produces two figure sets:
+Produces three figure sets:
+  - figures/det_curves/cross_mode_mean.pdf: one curve per mode, the
+    POINTWISE MEAN across all 5 seeds -- the statistically authoritative
+    ranking plot; matches Table~tab:permode-tprfpr's mean values exactly at
+    every FPR, including the VPN/Tor/Nym-two-hop crossing around FPR~1e-2.
   - figures/det_curves/cross_mode.pdf: one curve per mode, each mode's
-    REPRESENTATIVE seed only (the seed whose ROC-AUC is closest to that
+    REPRESENTATIVE seed only (the seed whose PR-AUC is closest to that
     mode's 5-seed mean -- a fixed, reproducible selection rule stated in the
-    caption, not a cherry-picked run).
+    caption, not a cherry-picked run). Illustrates typical single-run curve
+    shape; NOT guaranteed to reproduce the mean curve's crossing in
+    high-variance regions (it doesn't, for VPN) -- use cross_mode_mean.pdf
+    for ranking claims, this one only for "what does one real run look like."
   - figures/det_curves/within_mode_{mode}.pdf, one per mode: all 5 seeds for
     that mode overlaid, to show cross-seed spread directly (the same
     variability summarized by the std.\ columns in Table~tab:permode-tprfpr,
@@ -96,6 +103,41 @@ def representative_seed(runs_for_mode):
     return runs_for_mode[idx]
 
 
+def plot_mean_curve(by_mode, output_path):
+    """The statistically authoritative cross-mode ranking plot: pointwise
+    mean TPR across all 5 seeds (grids are identical across seeds, so this
+    is a direct mean, not an interpolated approximation), not a single
+    "representative" run. A single run selected by any whole-curve summary
+    metric (PR-AUC or otherwise) is not guaranteed to match the population
+    mean in any one narrow FPR region where cross-seed variance is high --
+    concretely, VPN's individually-typical seed (by PR-AUC) does not
+    reproduce the mean curve's crossing with Tor/Nym-two-hop around
+    FPR~1e-2, even though that crossing is real in the 5-seed average (and
+    matches Table~tab:permode-tprfpr exactly). This plot, not
+    plot_cross_mode's single-run version, is what cross-mode ranking claims
+    in the thesis should cite."""
+    fig, ax = plt.subplots(figsize=(6, 5.5))
+    for mode in MODE_ORDER:
+        runs = by_mode[mode]
+        grid = np.array(runs[0]["fpr"])
+        mean_tpr = np.mean([r["tpr"] for r in runs], axis=0)
+        mean_pr_auc = np.mean([r["pr_auc"] for r in runs])
+        fpr, fnr = _clean(grid, mean_tpr)
+        DetCurveDisplay(fpr=fpr, fnr=fnr).plot(
+            ax=ax, name=f"{MODE_LABELS[mode]} (mean of 5 seeds, PR-AUC={mean_pr_auc:.3f})",
+            color=MODE_COLOR[mode], linestyle=MODE_LINESTYLE[mode], linewidth=1.8,
+        )
+    _add_chance_line(ax)
+    ax.set_title("DET curves: pointwise mean of 5 seeds per mode")
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, which="both", linewidth=0.4, alpha=0.4)
+    fig.tight_layout()
+    fig.savefig(f"{output_path}/cross_mode_mean.pdf")
+    fig.savefig(f"{output_path}/cross_mode_mean.png", dpi=150)
+    plt.close(fig)
+    print(f"Saved: {output_path}/cross_mode_mean.{{pdf,png}}")
+
+
 def plot_cross_mode(by_mode, output_path):
     fig, ax = plt.subplots(figsize=(6, 5.5))
     for mode in MODE_ORDER:
@@ -106,7 +148,7 @@ def plot_cross_mode(by_mode, output_path):
             color=MODE_COLOR[mode], linestyle=MODE_LINESTYLE[mode], linewidth=1.6,
         )
     _add_chance_line(ax)
-    ax.set_title("DET curves: one representative run per mode")
+    ax.set_title("DET curves: one representative run per mode\n(curve shape only -- see cross_mode_mean.pdf for ranking)")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, which="both", linewidth=0.4, alpha=0.4)
     fig.tight_layout()
@@ -145,5 +187,6 @@ if __name__ == "__main__":
     output_path = "figures/det_curves"
     os.makedirs(output_path, exist_ok=True)
     by_mode = load_runs()
+    plot_mean_curve(by_mode, output_path)
     plot_cross_mode(by_mode, output_path)
     plot_within_mode(by_mode, output_path)

@@ -102,7 +102,8 @@ def compute_synthetic_quartet(ingress_pcap: str, egress_pcap: str, t_start: floa
     }
 
 
-def build_synthetic_dataset(labels_jsonl: str, data_dir: str, window_len: int, seed: int = 42) -> dict:
+def build_synthetic_dataset(labels_jsonl: str, data_dir: str, window_len: int,
+                             seed: int = 42, max_visits: int | None = None) -> dict:
     data_dir = Path(data_dir)
     rng = np.random.default_rng(seed)
     records = []
@@ -115,7 +116,15 @@ def build_synthetic_dataset(labels_jsonl: str, data_dir: str, window_len: int, s
             if rec.get("visit_status") == "success":
                 records.append(rec)
 
-    log.info(f"Found {len(records)} successful visits")
+    if max_visits is not None and len(records) > max_visits:
+        # Single-threaded pipeline (unlike dataset_builder.py's parallel
+        # workers) is far slower per visit -- this is a quick sensitivity
+        # check, not a full-power measurement, so a bounded subsample is a
+        # deliberate speed/precision tradeoff, not a shortcut on validity.
+        idx = np.random.default_rng(seed).choice(len(records), size=max_visits, replace=False)
+        records = [records[i] for i in idx]
+
+    log.info(f"Found {len(records)} successful visits (capped to {max_visits})" if max_visits else f"Found {len(records)} successful visits")
 
     ingress_up, ingress_down, egress_up, egress_down = [], [], [], []
     ingress_urls, egress_urls = [], []
@@ -168,13 +177,17 @@ if __name__ == "__main__":
     parser.add_argument("--labels", required=True)
     parser.add_argument("--data_dir", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--max-visits", type=int, default=None,
+                         help="Subsample cap -- this pipeline is single-threaded (unlike "
+                              "dataset_builder.py), so a bounded sample keeps the sensitivity "
+                              "check practical without needing full statistical power.")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for wl in WINDOW_LENS:
         log.info(f"=== window_len={wl} (synthetic, stretch={STRETCH_FACTOR}x, jitter={JITTER_SIGMA_S}s) ===")
-        data = build_synthetic_dataset(args.labels, args.data_dir, wl)
+        data = build_synthetic_dataset(args.labels, args.data_dir, wl, max_visits=args.max_visits)
         out_path = out_dir / f"vpn_synthetic_wl{wl}.npz"
         np.savez_compressed(out_path, **data)
         log.info(f"Saved {out_path}")

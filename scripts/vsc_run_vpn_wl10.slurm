@@ -48,7 +48,7 @@ BUNDLE_DIR="$VSC_SCRATCH/wire-adversary-correlator"
 cd "$BUNDLE_DIR" || { echo "[ERROR] $BUNDLE_DIR not found" >&2; exit 1; }
 mkdir -p logs
 
-DATASET="$VSC_DATA/wire-adversary-correlator/wire-adversary-correlator-data/datasets/vpn_wl10/vpn_wl10_merged.npz"
+DATASET="$VSC_DATA/wire-adversary-correlator/wire-adversary-correlator-data/datasets/vpn/vpn_wl10_merged.npz"
 [[ -f "$DATASET" ]] || { echo "[ERROR] $DATASET not found -- git pull the data repo first" >&2; exit 1; }
 
 OUT_DIR="results/vpn_wl10_seed${SEED}"

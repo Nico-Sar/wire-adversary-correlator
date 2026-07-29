@@ -63,6 +63,29 @@ def _clean(fpr, tpr):
     return fpr, fnr
 
 
+def _extend_axes_to_1e6(ax):
+    """sklearn's DetCurveDisplay defaults to a (-3,3) ppf-space xlim/ylim
+    (~0.1%-99.9%), which clips its own default tick labels at 0.1%/99.9%
+    (they exist in the tick list but fall just outside the default limits,
+    so never actually render) and stops well short of the 1e-4/1e-5/1.9e-6
+    operating points reported in Tables~tab:permode-tprfpr/tab:permode-prauc.
+    Widen to +/-4.9 (~1e-6/1-1e-6) and add explicit ticks at every rate we
+    report, so the extreme table entries are visually locatable on the
+    curve, not just tabulated (requested by E. Argones Rua, per-review)."""
+    from scipy.stats import norm
+    rates = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 0.05, 0.2, 0.5, 0.8, 0.95, 0.99, 0.999, 0.9999, 0.99999, 0.999999]
+    labels = ["1e-6", "1e-5", "1e-4", "0.1%", "1%", "5%", "20%", "50%",
+              "80%", "95%", "99%", "99.9%", "1-1e-4", "1-1e-5", "1-1e-6"]
+    ticks = [norm.ppf(r) for r in rates]
+    lim = norm.ppf(1 - EPS) + 0.15
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(labels, fontsize=7)
+
+
 def _add_chance_line(ax):
     """No-skill baseline: TPR=FPR (base-rate-invariant), so FNR=1-FPR --
     a straight line through the origin on the probit-scaled DET axes
@@ -128,6 +151,7 @@ def plot_mean_curve(by_mode, output_path):
             color=MODE_COLOR[mode], linestyle=MODE_LINESTYLE[mode], linewidth=1.8,
         )
     _add_chance_line(ax)
+    _extend_axes_to_1e6(ax)
     ax.set_title("DET curves: pointwise mean of 5 seeds per mode")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, which="both", linewidth=0.4, alpha=0.4)
@@ -148,6 +172,7 @@ def plot_cross_mode(by_mode, output_path):
             color=MODE_COLOR[mode], linestyle=MODE_LINESTYLE[mode], linewidth=1.6,
         )
     _add_chance_line(ax)
+    _extend_axes_to_1e6(ax)
     ax.set_title("DET curves: one representative run per mode\n(curve shape only -- see cross_mode_mean.pdf for ranking)")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, which="both", linewidth=0.4, alpha=0.4)
@@ -172,6 +197,7 @@ def plot_within_mode(by_mode, output_path):
                 color=color, linewidth=1.3, alpha=0.85, linestyle=SEED_LINESTYLE[i],
             )
         _add_chance_line(ax)
+        _extend_axes_to_1e6(ax)
         ax.set_title(f"DET curves, all 5 seeds: {MODE_LABELS[mode]}")
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, which="both", linewidth=0.4, alpha=0.4)

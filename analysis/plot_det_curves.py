@@ -68,10 +68,17 @@ def load_runs(path="analysis/det_curves.json"):
 
 
 def representative_seed(runs_for_mode):
-    """Seed whose ROC-AUC is closest to the mode's 5-seed mean -- a fixed,
+    """Seed whose PR-AUC is closest to the mode's 5-seed mean -- a fixed,
     stated rule so the "one representative run per mode" plot is
-    reproducible and not a cherry-picked best case."""
-    aucs = np.array([r["roc_auc"] for r in runs_for_mode])
+    reproducible and not a cherry-picked best case. PR-AUC, not ROC-AUC:
+    Section~sec:eval-protocol's own argument for preferring PR-AUC is that
+    ROC-AUC is insensitive to the class imbalance this thesis is about, which
+    makes it a poor criterion for "typicality" too -- an earlier version of
+    this function used ROC-AUC and picked VPN's seed 3, the one seed flagged
+    elsewhere (Section~sec:permode) as an outlier on every imbalance-sensitive
+    metric (TPR@1e-3, PR-AUC); ROC-AUC couldn't see it because ROC-AUC is
+    exactly the metric that's blind to that kind of variability."""
+    aucs = np.array([r["pr_auc"] for r in runs_for_mode])
     mean_auc = aucs.mean()
     idx = int(np.argmin(np.abs(aucs - mean_auc)))
     return runs_for_mode[idx]
@@ -83,7 +90,7 @@ def plot_cross_mode(by_mode, output_path):
         run = representative_seed(by_mode[mode])
         fpr, fnr = _clean(run["fpr"], run["tpr"])
         DetCurveDisplay(fpr=fpr, fnr=fnr).plot(
-            ax=ax, name=f"{MODE_LABELS[mode]} (seed {run['seed']}, ROC-AUC={run['roc_auc']:.3f})",
+            ax=ax, name=f"{MODE_LABELS[mode]} (seed {run['seed']}, PR-AUC={run['pr_auc']:.3f}, ROC-AUC={run['roc_auc']:.3f})",
             color=MODE_COLOR[mode], linestyle=MODE_LINESTYLE[mode], linewidth=1.6,
         )
     ax.set_title("DET curves: one representative run per mode")
@@ -106,7 +113,7 @@ def plot_within_mode(by_mode, output_path):
         for i, run in enumerate(by_mode[mode]):
             fpr, fnr = _clean(run["fpr"], run["tpr"])
             DetCurveDisplay(fpr=fpr, fnr=fnr).plot(
-                ax=ax, name=f"seed {run['seed']} (ROC-AUC={run['roc_auc']:.3f})",
+                ax=ax, name=f"seed {run['seed']} (PR-AUC={run['pr_auc']:.3f}, ROC-AUC={run['roc_auc']:.3f})",
                 color=color, linewidth=1.3, alpha=0.85, linestyle=SEED_LINESTYLE[i],
             )
         ax.set_title(f"DET curves, all 5 seeds: {MODE_LABELS[mode]}")

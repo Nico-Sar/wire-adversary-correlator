@@ -44,6 +44,7 @@ for mode in MODES:
             "fpr": GRID.tolist(),
             "tpr": tpr_grid.tolist(),
             "roc_auc": d["roc_auc"],
+            "pr_auc": d["pr_auc"],
         })
         print(f"{mode} seed={seed}: {len(fpr)} raw points -> {len(GRID)} grid points")
 

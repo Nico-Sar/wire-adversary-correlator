@@ -56,6 +56,18 @@ def _clean(fpr, tpr):
     return fpr, fnr
 
 
+def _add_chance_line(ax):
+    """No-skill baseline: TPR=FPR (base-rate-invariant), so FNR=1-FPR --
+    a straight line through the origin on the probit-scaled DET axes
+    (ppf(1-p) = -ppf(p)), following the reference-line convention in
+    sklearn's own DET curve example."""
+    fpr_line = np.array([EPS, 1 - EPS])
+    fnr_line = 1 - fpr_line
+    DetCurveDisplay(fpr=fpr_line, fnr=fnr_line).plot(
+        ax=ax, name="chance", color="gray", linestyle=":", linewidth=1.0, alpha=0.6,
+    )
+
+
 def load_runs(path="analysis/det_curves.json"):
     with open(path) as f:
         runs = json.load(f)
@@ -93,6 +105,7 @@ def plot_cross_mode(by_mode, output_path):
             ax=ax, name=f"{MODE_LABELS[mode]} (seed {run['seed']}, PR-AUC={run['pr_auc']:.3f}, ROC-AUC={run['roc_auc']:.3f})",
             color=MODE_COLOR[mode], linestyle=MODE_LINESTYLE[mode], linewidth=1.6,
         )
+    _add_chance_line(ax)
     ax.set_title("DET curves: one representative run per mode")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, which="both", linewidth=0.4, alpha=0.4)
@@ -116,6 +129,7 @@ def plot_within_mode(by_mode, output_path):
                 ax=ax, name=f"seed {run['seed']} (PR-AUC={run['pr_auc']:.3f}, ROC-AUC={run['roc_auc']:.3f})",
                 color=color, linewidth=1.3, alpha=0.85, linestyle=SEED_LINESTYLE[i],
             )
+        _add_chance_line(ax)
         ax.set_title(f"DET curves, all 5 seeds: {MODE_LABELS[mode]}")
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, which="both", linewidth=0.4, alpha=0.4)

@@ -61,27 +61,21 @@ KDE_PER_MODE = {
     # p95=86s long tail, so this is a modest widening within the existing
     # truncation tradeoff, not a reversal of it. n_windows recalculates
     # automatically from duration/t_sample/overlap; not hand-counted here.
-    # window_len RETUNED 2026-07-29 (30 -> 10, i.e. 1s not 3s per window):
-    # per-mode window_len pilot sweep (5 candidates x 1 seed, real round_01
-    # campaign data, validation PR-AUC) found wl=10 clearly best for tor
-    # (0.8469 vs 0.7980-0.8351 for the other 4 candidates) -- window_len
-    # was previously a single global constant (KDE["window_len"]=30) never
-    # tuned per mode, unlike duration/sigma. See thesis Section~sec:setup
-    # for the full sweep methodology and results table.
-    # window_len RETUNED 2026-07-29 (30 -> 10), tor/nym2/nym5's tuning basis
-    # UNDER RE-VERIFICATION 2026-07-30 -- see the vpn note below: the pilot
-    # sweep's own selection metric (train.py's in-training val PR-AUC,
-    # window_len_sweep_train.sh) turned out to be computed on a
-    # balanced-ish negative-sampling validation split, not the full
-    # imbalanced all-pairs evaluation evaluate.py actually reports and this
-    # thesis cites. That proxy saturated near 1.0 for vpn regardless of
-    # window_len and completely missed a real, large effect only visible
-    # under the true metric. tor/nym2's window_len=10 choice rested on the
-    # same flawed proxy; a real 5-seed wl=30 baseline (built the same way as
-    # vpn's wl=10 follow-up, from raw campaign pcaps) is in progress to
-    # confirm whether the switch actually helped under the metric that
-    # matters, not just that it produced plausible-looking numbers.
-    "tor":      {"duration": 32.0,  "sigma": 0.25, "window_len": 10},
+    # window_len RETUNED 2026-07-29 (30 -> 10), then REVERTED 2026-07-30.
+    # The 2026-07-29 pilot sweep (window_len_sweep_train.sh, 1 seed/candidate,
+    # train.py's in-training val PR-AUC) found wl=10 "clearly best" (0.8469 vs
+    # 0.7980-0.8351) -- WRONG. That in-training metric is computed on a
+    # balanced-ish negative-sampling validation split, not evaluate.py's full
+    # imbalanced all-pairs evaluation (the metric this thesis actually
+    # reports) -- see the vpn note below for the mechanism, found via VPN's
+    # variance follow-up. Once tor got a real apples-to-apples check (5-seed
+    # wl=30 baseline vs. the already-real wl=10 production run, both through
+    # evaluate.py, built from the same raw campaign pcaps), the pilot's
+    # ranking turned out backwards: wl=30 PR-AUC mean=0.1148 (std=0.0316) vs.
+    # wl=10's real PR-AUC mean=0.0611 (std=0.0160) -- roughly 2x BETTER at the
+    # original default, not the retuned value. Reverted to wl=30 (i.e. no
+    # override, same as the global default) on this real evidence.
+    "tor":      {"duration": 32.0,  "sigma": 0.25},
     # vpn: real visits are near-instantaneous (no relay latency) — egress
     # (the longer of the two streams) has p99=3.15s, max=3.29s. 6s duration
     # covers max with ~1.8x margin. n_windows=3 at window_len=30.
@@ -109,14 +103,14 @@ KDE_PER_MODE = {
     # Accepts truncation of the rare >30s outlier (max=140s) for the same
     # reason as tor above. n_windows=19 at window_len=30.
     # window_len pilot sweep (2026-07-29): wl=40 scored best (0.3889) vs.
-    # wl=30's 0.3875 (+0.4% relative) on the SAME flawed in-training proxy
+    # wl=30's 0.3875 (+0.4% relative) on the flawed in-training proxy
     # described in the vpn note above -- concluded "no real signal", left
-    # unchanged. UNDER RE-VERIFICATION 2026-07-30: unlike vpn's proxy
-    # values, nym5's (0.23-0.39) weren't obviously saturated, so this is
-    # less likely to be hiding a vpn-sized effect -- but "less likely" isn't
-    # "confirmed" now that the proxy is known to be unreliable. A real
-    # 5-seed wl=40 build (evaluate.py, same protocol as vpn's follow-up) is
-    # in progress to check.
+    # unchanged. RE-VERIFIED 2026-07-30 with a real 5-seed wl=40 build
+    # (evaluate.py, same protocol as vpn's follow-up): PR-AUC mean=0.0060
+    # (std=0.0005) vs. the real wl=30 production PR-AUC mean=0.0055
+    # (std=0.0009) -- overlapping ranges, still within noise. Unlike tor/
+    # nym2, this candidate's original "no signal" call holds up under the
+    # real metric. Left unchanged.
     "nym5":     {"duration": 30.0,  "sigma": 0.5},
     # nym2 (2-hop WireGuard): confirmed on pilot (56/59 visits built, span p95=9.2s, max=9.8s).
     # duration=30s: p95_span(9.2s)+10s buffer → 30s floor. n_windows=19 (same as vpn).
@@ -124,11 +118,12 @@ KDE_PER_MODE = {
     # meaningless for kernel width. 0.2s smooths the burst envelope without collapsing structure.
     # min_packets=5: nym2's upstream (client→mix) has very few packets per visit; the global 50
     # would drop essentially all nym2 flows. Keep permissive here; yield gate catches real loss.
-    # window_len RETUNED 2026-07-29 (30 -> 10, i.e. 1s not 3s per window):
-    # window_len pilot sweep found wl=10 best (0.8252); the previous global
-    # default (30) scored worst of nym2's 5 candidates (0.7995) -- on the
-    # same flawed in-training proxy described in the vpn note above.
-    # UNDER RE-VERIFICATION 2026-07-30: a real 5-seed wl=30 baseline is in
-    # progress (see tor note).
-    "nym2":     {"duration": 30.0,  "sigma": 0.2, "min_packets": 5, "window_len": 10},
+    # window_len RETUNED 2026-07-29 (30 -> 10), then REVERTED 2026-07-30, same
+    # story as tor above: the pilot's in-training proxy scored wl=10 best
+    # (0.8252 vs wl=30's worst-of-5 0.7995), but a real 5-seed wl=30 baseline
+    # vs. the real wl=10 production run (both evaluate.py, same campaign
+    # pcaps) showed wl=30 PR-AUC mean=0.0706 (std=0.0127) vs. wl=10's real
+    # PR-AUC mean=0.0194 (std=0.0051) -- roughly 3.6x BETTER at the original
+    # default. Reverted to wl=30 (no override) on this real evidence.
+    "nym2":     {"duration": 30.0,  "sigma": 0.2, "min_packets": 5},
 }

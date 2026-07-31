@@ -35,50 +35,15 @@ CLIENTS = {
     "tor-client2":  {"host": "204.168.194.172", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.8"},
     "nym5-client1": {"host": "204.168.204.120", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.9"},
     "nym5-client2": {"host": "178.104.191.219", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.10"},
-    # nym2-client1 (2026-07-19): converted in place to a nym5 client
-    # (nym-vpnc tunnel set --two-hop off) once nym2's own collection
-    # comfortably exceeded target — same VM/IP, now running 5-hop mixnet
-    # instead of 2-hop WireGuard. Kept as "nym2-client1" here too (not
-    # deleted) because dataset_builder.py's get_client_private_ip() still
-    # needs this entry to rebuild nym2's already-collected historical
-    # visits; removed from CLIENT_GROUPS["nym2"] below so it can't be
-    # accidentally relaunched as nym2 collection.
-    # nym5-client3 (2026-07-20): root-caused -- the "Error reading SSH
-    # protocol banner" was never specific to this VM. nym5-client1 (the
-    # reference "healthy" client) hits the identical failure on nearly every
-    # circuit rotation (240 hard hcloud resets against 626 successful visits
-    # in round_06 alone) -- it only "works" because coordinator.py's
-    # wedge-recovery escalates through a full hcloud reset almost every
-    # time. client3's manual test invocations never lived long enough to
-    # exercise that same recovery path, so nothing rescued them. Re-added to
-    # CLIENT_GROUPS below now that it's launched through the full
-    # coordinator (same wedge-recovery machinery as client1/2).
-    "nym5-client3": {"host": "95.216.218.124",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.4"},
     "nym2-client1": {"host": "95.216.218.124",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.4"},
-    # nym2-client2 (2026-07-20): same conversion as nym2-client1 above, see
-    # that comment for why nym2-client2's entry is also kept.
-    "nym5-client4": {"host": "178.104.184.192", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.6"},
     "nym2-client2": {"host": "178.104.184.192", "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.6"},
-    # nym5-client5/6 (2026-07-20): vpn-client1/2 converted the same way as
-    # nym2-client1/2 above, once vpn's own collection comfortably exceeded
-    # target (38,174 valid pairs vs. 25,000). Kept as "vpn-client1/2" here
-    # too so dataset_builder.py's get_client_private_ip() can still rebuild
-    # vpn's already-collected historical visits; removed from
-    # CLIENT_GROUPS["vpn"] below.
-    "nym5-client5": {"host": "204.168.205.5",   "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.5"},
-    "nym5-client6": {"host": "204.168.184.39",  "user": "root", "key_path": "~/.ssh/nico-thesis", "private_ip": "10.0.0.3"},
 }
 
 CLIENT_GROUPS = {
-    # vpn collection already done (38,174 valid pairs, comfortably exceeds
-    # the 25,000 target) -- both clients converted to nym5-client5/6 above.
-    "vpn":      [],
+    "vpn":      ["vpn-client1", "vpn-client2"],
     "tor":      ["tor-client1", "tor-client2"],
-    "nym5":     ["nym5-client1", "nym5-client2", "nym5-client3", "nym5-client4", "nym5-client5", "nym5-client6"],
-    # nym2-client1/2 both converted (see CLIENTS comments above) -- nothing
-    # left in nym2's active rotation, which is correct: nym2 collection is
-    # already done and comfortably exceeds target.
-    "nym2":     [],
+    "nym5":     ["nym5-client1", "nym5-client2"],
+    "nym2":     ["nym2-client1", "nym2-client2"],
 }
 
 # Modes whose clients physically never appear on the ingress router's private
@@ -167,3 +132,4 @@ def get_client_private_ip(client_id: str) -> str:
     """Returns the private IP for a given client_id.
     Used by quartet_builder for direction inference in pcap parsing."""
     return CLIENTS[client_id]["private_ip"]
+    
